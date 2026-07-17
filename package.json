@@ -1,0 +1,40 @@
+{
+  "name": "market-management-desktop",
+  "version": "0.1.0",
+  "description": "Market Management desktop application shell",
+  "author": "Omnia",
+  "private": true,
+  "main": "dist/main/index.js",
+  "scripts": {
+    "clean": "rimraf dist release build/frontend",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "build:desktop": "tsc -p tsconfig.build.json",
+    "build:frontend": "pnpm --dir ../frontend-management-market/supermarket-management-frontend build",
+    "copy:frontend": "node scripts/copy-frontend.mjs",
+    "prepare:frontend": "pnpm build:frontend && pnpm copy:frontend",
+    "test": "vitest run",
+    "start": "electron .",
+    "dev": "pnpm build:desktop && electron .",
+    "package": "pnpm build:desktop && pnpm prepare:frontend && electron-builder --publish never",
+    "package:dir": "pnpm build:desktop && pnpm prepare:frontend && electron-builder --dir --publish never"
+  },
+  "dependencies": {
+    "electron-log": "^5.2.4",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  }
+}

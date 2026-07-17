@@ -1,0 +1,38 @@
+appId: com.omnia.market-management
+productName: Market Management
+copyright: Copyright © 2026 Omnia
+
+asar: true
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+
+extraResources:
+  - from: build/frontend
+    to: frontend
+    filter:
+      - "**/*"
+  - from: build/default-config.json
+    to: default-config.json
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Market Management
+
+publish: null
