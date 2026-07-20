@@ -46,6 +46,34 @@ describe("resolveDesktopConfig", () => {
     expect(config.updateEnabled).toBe(false);
     expect(config.updates.enabled).toBe(false);
   });
+
+  it("keeps offline disabled by default for safe rollout", () => {
+    const config = resolveDesktopConfig({ env: {} });
+
+    expect(config.offline.enabled).toBe(false);
+  });
+
+  it("enables offline when user config sets offline.enabled to true", () => {
+    const userConfigPath = writeTempConfig({ offline: { enabled: true } });
+
+    const config = resolveDesktopConfig({ env: {}, userConfigPath });
+
+    expect(config.offline.enabled).toBe(true);
+  });
+
+  it("defaults integrityCheckOnStartup to true", () => {
+    const config = resolveDesktopConfig({ env: {} });
+
+    expect(config.offline.integrityCheckOnStartup).toBe(true);
+  });
+
+  it("respects explicit integrityCheckOnStartup false", () => {
+    const userConfigPath = writeTempConfig({ offline: { integrityCheckOnStartup: false } });
+
+    const config = resolveDesktopConfig({ env: {}, userConfigPath });
+
+    expect(config.offline.integrityCheckOnStartup).toBe(false);
+  });
 });
 
 describe("desktop config encoding", () => {

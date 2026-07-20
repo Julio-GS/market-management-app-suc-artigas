@@ -6,12 +6,22 @@ export interface UpdateConfig {
   url?: string;
 }
 
+export interface OfflineConfig {
+  /** Whether offline capability is enabled. Defaults to false (safe rollout). */
+  enabled: boolean;
+  /** Override the local DB directory for testing or recovery. */
+  dbPath?: string;
+  /** Run integrity_check on every startup. Defaults to true. */
+  integrityCheckOnStartup: boolean;
+}
+
 export interface DesktopConfig {
   apiBaseUrl: string;
   frontendDevUrl: string;
   appVersion: string;
   updateEnabled: boolean;
   updates: UpdateConfig;
+  offline: OfflineConfig;
 }
 
 interface ConfigFileShape {
@@ -21,6 +31,10 @@ interface ConfigFileShape {
     enabled?: unknown;
     provider?: unknown;
     url?: unknown;
+  };
+  offline?: {
+    enabled?: unknown;
+    integrityCheckOnStartup?: unknown;
   };
 }
 
@@ -77,6 +91,16 @@ export function resolveDesktopConfig(options: ResolveDesktopConfigOptions = {}):
     booleanValue(defaultConfig.updates?.enabled) ??
     false;
 
+  const offlineEnabled =
+    booleanValue(userConfig.offline?.enabled) ??
+    booleanValue(defaultConfig.offline?.enabled) ??
+    false;
+
+  const integrityCheckOnStartup =
+    booleanValue(userConfig.offline?.integrityCheckOnStartup) ??
+    booleanValue(defaultConfig.offline?.integrityCheckOnStartup) ??
+    true;
+
   return {
     apiBaseUrl,
     frontendDevUrl,
@@ -86,6 +110,10 @@ export function resolveDesktopConfig(options: ResolveDesktopConfigOptions = {}):
       enabled: updateEnabled,
       provider: updateProvider(userConfig.updates?.provider) ?? updateProvider(defaultConfig.updates?.provider),
       url: stringValue(userConfig.updates?.url) ?? stringValue(defaultConfig.updates?.url)
+    },
+    offline: {
+      enabled: offlineEnabled,
+      integrityCheckOnStartup
     }
   };
 }

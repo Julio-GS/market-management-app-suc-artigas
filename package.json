@@ -15,15 +15,19 @@
     "prepare:frontend": "pnpm build:frontend && pnpm copy:frontend",
     "test": "vitest run",
     "start": "electron .",
-    "dev": "pnpm build:desktop && electron .",
+    "rebuild:electron": "electron-rebuild -f -w better-sqlite3 -v 33.4.11",
+    "dev": "pnpm build:desktop && pnpm rebuild:electron && electron .",
     "package": "pnpm build:desktop && pnpm prepare:frontend && electron-builder --publish never",
     "package:dir": "pnpm build:desktop && pnpm prepare:frontend && electron-builder --dir --publish never"
   },
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
     "electron-log": "^5.2.4",
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
     "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
@@ -34,7 +38,8 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "electron",
-      "esbuild"
+      "esbuild",
+      "better-sqlite3"
     ]
   }
 }

@@ -4,6 +4,9 @@ copyright: Copyright © 2026 Omnia
 
 asar: true
 
+asarUnpack:
+  - "node_modules/better-sqlite3/**"
+
 directories:
   output: release
   buildResources: build

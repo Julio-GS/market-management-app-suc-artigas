@@ -8,7 +8,8 @@ function configWithUpdates(updates: DesktopConfig["updates"]): DesktopConfig {
     frontendDevUrl: "http://localhost:3001",
     appVersion: "0.1.0",
     updateEnabled: updates.enabled,
-    updates
+    updates,
+    offline: { enabled: false, integrityCheckOnStartup: true }
   };
 }
 

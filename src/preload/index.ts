@@ -2,6 +2,24 @@ import { contextBridge, ipcRenderer } from "electron";
 import { decodeDesktopConfig, type DesktopConfig } from "../main/config";
 import { UPDATE_CHANNELS, type UpdateEventPayload } from "../main/updater";
 import type { UpdateStatus } from "../main/updater-status";
+import { OFFLINE_CHANNELS } from "../main/offline-ipc";
+import { BOOTSTRAP_CHANNELS } from "../main/bootstrap-ipc";
+import { SALES_CHANNELS } from "../main/sales-ipc";
+import { SYNC_CHANNELS } from "../main/sync-ipc";
+import { PRODUCTS_CHANNELS } from "../main/products-ipc";
+import { PROMOTIONS_CHANNELS } from "../main/promotions-ipc";
+import { PROVIDER_PURCHASES_CHANNELS } from "../main/provider-purchases-ipc";
+import { REPORTS_CHANNELS } from "../main/reports-ipc";
+import { SUPPORT_CHANNELS, type OutboxListItem, type OutboxRetryResult } from "../main/support-ipc";
+import type { OfflineState } from "../main/offline-state";
+import type { BootstrapResult } from "../main/bootstrap";
+import type { OfflineSaleInput, OfflineSaleIpcResult } from "../main/sales-ipc";
+import type { SyncStatePayload } from "../main/sync-ipc";
+import type { PullResult } from "../main/pull-reconciliation";
+import type { ReplayResult } from "../main/sync-engine";
+import type { OfflineProductInput, OfflineProductUpdateInput, OfflineProductResult } from "../main/products-ipc";
+import type { OfflinePromotionInput, OfflinePromotionUpdateInput, OfflinePromotionResult } from "../main/promotions-ipc";
+import type { OfflineProviderPurchaseInput, OfflineProviderPurchaseUpdateInput, OfflineProviderPurchaseResult } from "../main/provider-purchases-ipc";
 
 interface MarketDesktopBridge {
   getConfig(): DesktopConfig;
@@ -12,6 +30,53 @@ interface MarketDesktopBridge {
     download(): Promise<unknown>;
     installAndRestart(): Promise<unknown>;
     onStatus(callback: (payload: UpdateEventPayload) => void): () => void;
+  };
+  offline: {
+    getState(): Promise<OfflineState>;
+  };
+  bootstrap: {
+    status(): Promise<BootstrapResult>;
+    start(params: { token: string; apiBaseUrl: string }): Promise<BootstrapResult>;
+    resume(params: { token: string; apiBaseUrl: string }): Promise<BootstrapResult>;
+  };
+  sales: {
+    complete(input: OfflineSaleInput): Promise<OfflineSaleIpcResult>;
+    get(saleId: string): Promise<OfflineSaleIpcResult>;
+  };
+  sync: {
+    getState(): Promise<SyncStatePayload>;
+    start(params?: { apiBaseUrl?: string; token?: string }): Promise<ReplayResult>;
+    pull(params?: { apiBaseUrl?: string; token?: string }): Promise<PullResult>;
+  };
+  products: {
+    create(input: OfflineProductInput): Promise<OfflineProductResult>;
+    update(id: string, input: OfflineProductUpdateInput): Promise<OfflineProductResult>;
+    delete(id: string): Promise<OfflineProductResult>;
+    list(filters?: { search?: string }): Promise<OfflineProductResult[]>;
+    get(id: string): Promise<OfflineProductResult>;
+    findByCode(code: string): Promise<OfflineProductResult>;
+  };
+  promotions: {
+    create(input: OfflinePromotionInput): Promise<OfflinePromotionResult>;
+    update(id: string, input: OfflinePromotionUpdateInput): Promise<OfflinePromotionResult>;
+    delete(id: string): Promise<OfflinePromotionResult>;
+    list(): Promise<OfflinePromotionResult[]>;
+  };
+  providerPurchases: {
+    create(input: OfflineProviderPurchaseInput): Promise<OfflineProviderPurchaseResult>;
+    update(id: string, input: OfflineProviderPurchaseUpdateInput): Promise<OfflineProviderPurchaseResult>;
+    list(): Promise<OfflineProviderPurchaseResult[]>;
+    delete(id: string): Promise<OfflineProviderPurchaseResult>;
+  };
+  reports: {
+    getSalesSummary(): Promise<unknown>;
+    getRecentSales(limit?: number): Promise<unknown>;
+    getStaleness(): Promise<unknown>;
+  };
+  support: {
+    listOutbox(filter?: { status?: string }): Promise<OutboxListItem[]>;
+    retryOutbox(id: string): Promise<OutboxRetryResult>;
+    exportOutbox(): Promise<OutboxListItem[]>;
   };
 }
 
@@ -29,7 +94,8 @@ const desktopConfig: DesktopConfig = encodedConfig
       frontendDevUrl: "http://localhost:3001",
       appVersion: "0.0.0",
       updateEnabled: false,
-      updates: { enabled: false }
+      updates: { enabled: false },
+      offline: { enabled: false, integrityCheckOnStartup: true }
     };
 
 const marketDesktop: MarketDesktopBridge = {
@@ -45,7 +111,56 @@ const marketDesktop: MarketDesktopBridge = {
       ipcRenderer.on(UPDATE_CHANNELS.STATUS, listener);
       return () => ipcRenderer.off(UPDATE_CHANNELS.STATUS, listener);
     }
-  }
+  },
+  offline: {
+    getState: () => ipcRenderer.invoke(OFFLINE_CHANNELS.GET_STATE) as Promise<OfflineState>,
+  },
+  bootstrap: {
+    status: () => ipcRenderer.invoke(BOOTSTRAP_CHANNELS.BOOTSTRAP_STATUS) as Promise<BootstrapResult>,
+    start: (params) => ipcRenderer.invoke(BOOTSTRAP_CHANNELS.BOOTSTRAP_START, params) as Promise<BootstrapResult>,
+    resume: (params) => ipcRenderer.invoke(BOOTSTRAP_CHANNELS.BOOTSTRAP_RESUME, params) as Promise<BootstrapResult>,
+  },
+  sales: {
+    complete: (input) => ipcRenderer.invoke(SALES_CHANNELS.COMPLETE_SALE, input) as Promise<OfflineSaleIpcResult>,
+    get: (saleId) => ipcRenderer.invoke(SALES_CHANNELS.GET_SALE, saleId) as Promise<OfflineSaleIpcResult>,
+  },
+  sync: {
+    getState: () => ipcRenderer.invoke(SYNC_CHANNELS.GET_SYNC_STATE) as Promise<SyncStatePayload>,
+    start: (params?: { apiBaseUrl?: string; token?: string }) =>
+      ipcRenderer.invoke(SYNC_CHANNELS.START_SYNC, params) as Promise<ReplayResult>,
+    pull: (params?: { apiBaseUrl?: string; token?: string }) =>
+      ipcRenderer.invoke(SYNC_CHANNELS.PULL, params) as Promise<PullResult>,
+  },
+  products: {
+    create: (input) => ipcRenderer.invoke(PRODUCTS_CHANNELS.CREATE, input) as Promise<OfflineProductResult>,
+    update: (id, input) => ipcRenderer.invoke(PRODUCTS_CHANNELS.UPDATE, id, input) as Promise<OfflineProductResult>,
+    delete: (id) => ipcRenderer.invoke(PRODUCTS_CHANNELS.DELETE, id) as Promise<OfflineProductResult>,
+    list: (filters?) => ipcRenderer.invoke(PRODUCTS_CHANNELS.LIST, filters) as Promise<OfflineProductResult[]>,
+    get: (id) => ipcRenderer.invoke(PRODUCTS_CHANNELS.GET, id) as Promise<OfflineProductResult>,
+    findByCode: (code) => ipcRenderer.invoke(PRODUCTS_CHANNELS.FIND_BY_CODE, code) as Promise<OfflineProductResult>,
+  },
+  promotions: {
+    create: (input) => ipcRenderer.invoke(PROMOTIONS_CHANNELS.CREATE, input) as Promise<OfflinePromotionResult>,
+    update: (id, input) => ipcRenderer.invoke(PROMOTIONS_CHANNELS.UPDATE, id, input) as Promise<OfflinePromotionResult>,
+    delete: (id) => ipcRenderer.invoke(PROMOTIONS_CHANNELS.DELETE, id) as Promise<OfflinePromotionResult>,
+    list: () => ipcRenderer.invoke(PROMOTIONS_CHANNELS.LIST) as Promise<OfflinePromotionResult[]>,
+  },
+  providerPurchases: {
+    create: (input) => ipcRenderer.invoke(PROVIDER_PURCHASES_CHANNELS.CREATE, input) as Promise<OfflineProviderPurchaseResult>,
+    update: (id, input) => ipcRenderer.invoke(PROVIDER_PURCHASES_CHANNELS.UPDATE, id, input) as Promise<OfflineProviderPurchaseResult>,
+    list: () => ipcRenderer.invoke(PROVIDER_PURCHASES_CHANNELS.LIST) as Promise<OfflineProviderPurchaseResult[]>,
+    delete: (id) => ipcRenderer.invoke(PROVIDER_PURCHASES_CHANNELS.DELETE, id) as Promise<OfflineProviderPurchaseResult>,
+  },
+  reports: {
+    getSalesSummary: () => ipcRenderer.invoke(REPORTS_CHANNELS.GET_SALES_SUMMARY),
+    getRecentSales: (limit?: number) => ipcRenderer.invoke(REPORTS_CHANNELS.GET_RECENT_SALES, limit),
+    getStaleness: () => ipcRenderer.invoke(REPORTS_CHANNELS.GET_STALENESS),
+  },
+  support: {
+    listOutbox: (filter) => ipcRenderer.invoke(SUPPORT_CHANNELS.LIST_OUTBOX, filter) as Promise<OutboxListItem[]>,
+    retryOutbox: (id) => ipcRenderer.invoke(SUPPORT_CHANNELS.RETRY_OUTBOX, id) as Promise<OutboxRetryResult>,
+    exportOutbox: () => ipcRenderer.invoke(SUPPORT_CHANNELS.EXPORT_OUTBOX) as Promise<OutboxListItem[]>,
+  },
 };
 
 contextBridge.exposeInMainWorld("__MARKET_DESKTOP_CONFIG__", desktopConfig);

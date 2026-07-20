@@ -85,12 +85,12 @@ function initDatabase(userDataPath: string, integrityCheckOnStartup: boolean): v
   registerPromotionsIpc(getDb);
   registerProviderPurchasesIpc(getDb);
   registerReportsIpc(getDb);
-  registerSupportIpc(getDb);
+      registerSupportIpc(getDb);
 }
 
 function shutdownDatabase(): void {
   unregisterSyncIpc();
-  unregisterSupportIpc();
+      unregisterSupportIpc();
   unregisterReportsIpc();
   unregisterProviderPurchasesIpc();
   unregisterPromotionsIpc();
