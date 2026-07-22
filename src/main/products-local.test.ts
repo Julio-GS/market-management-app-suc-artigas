@@ -103,8 +103,8 @@ describe("searchOfflineProducts", () => {
     });
 
     it("returns multiple products when search matches more than one", () => {
-      // "entero" appears in both "Leche Entera 1L" and "Yogur Entero"
-      const results = searchOfflineProducts(db, { search: "entero" });
+      // "ent" appears in both "Leche Entera 1L" and "Yogur Entero"
+      const results = searchOfflineProducts(db, { search: "ent" });
       expect(results).toHaveLength(2);
       const names = results.map((r) => r.product!.detalle).sort();
       expect(names).toEqual(["Leche Entera 1L", "Yogur Entero"]);

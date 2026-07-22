@@ -11,7 +11,7 @@ import {
 import { BOOTSTRAP_CHANNELS } from "../main/bootstrap-ipc";
 import { SALES_CHANNELS, type ListedSale } from "../main/sales-ipc";
 import { SYNC_CHANNELS } from "../main/sync-ipc";
-import { PRODUCTS_CHANNELS } from "../main/products-ipc";
+import { PRODUCTS_CHANNELS } from "../main/adapters/products/products-ipc";
 import { PROMOTIONS_CHANNELS } from "../main/promotions-ipc";
 import { PROVIDER_PURCHASES_CHANNELS } from "../main/provider-purchases-ipc";
 import { REPORTS_CHANNELS } from "../main/reports-ipc";
@@ -22,7 +22,7 @@ import type { OfflineSaleInput, OfflineSaleIpcResult } from "../main/sales-ipc";
 import type { SyncStatePayload } from "../main/sync-ipc";
 import type { PullResult } from "../main/pull-reconciliation";
 import type { ReplayResult } from "../main/sync-engine";
-import type { OfflineProductInput, OfflineProductUpdateInput, OfflineProductResult } from "../main/products-ipc";
+import type { OfflineProductInput, OfflineProductUpdateInput, OfflineProductResult } from "../main/adapters/products/products-ipc";
 import type { OfflinePromotionInput, OfflinePromotionUpdateInput, OfflinePromotionResult } from "../main/promotions-ipc";
 import type { OfflineProviderPurchaseInput, OfflineProviderPurchaseUpdateInput, OfflineProviderPurchaseResult } from "../main/provider-purchases-ipc";
 
