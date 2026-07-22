@@ -19,7 +19,9 @@ import { PromotionService } from "./application/promotions/promotion-service";
 import { ProductsSqliteRepository } from "./infrastructure/persistence/products-sqlite-repository";
 import { PromotionsSqliteRepository } from "./infrastructure/persistence/promotions-sqlite-repository";
 import { OutboxSqliteRepository } from "./infrastructure/persistence/outbox-sqlite-repository";
-import { registerProviderPurchasesIpc, unregisterProviderPurchasesIpc } from "./provider-purchases-ipc";
+import { registerProviderPurchasesIpc, unregisterProviderPurchasesIpc } from "./adapters/provider-purchases/provider-purchases-ipc";
+import { ProviderPurchaseService } from "./application/provider-purchases/provider-purchase-service";
+import { ProviderPurchasesSqliteRepository } from "./infrastructure/persistence/provider-purchases-sqlite-repository";
 import { registerReportsIpc, unregisterReportsIpc } from "./reports-ipc";
 import { registerSupportIpc, unregisterSupportIpc } from "./support-ipc";
 import { onConnectivityChange } from "./connectivity-state";
@@ -143,7 +145,9 @@ function initDatabase(
   const promotionsRepository = new PromotionsSqliteRepository(getDb, outboxRepository);
   const promotionService = new PromotionService(promotionsRepository);
   registerPromotionsIpc(promotionService);
-  registerProviderPurchasesIpc(getDb);
+  const providerPurchasesRepository = new ProviderPurchasesSqliteRepository(getDb, outboxRepository);
+  const providerPurchaseService = new ProviderPurchaseService(providerPurchasesRepository);
+  registerProviderPurchasesIpc(providerPurchaseService);
   registerReportsIpc(getDb);
   registerSupportIpc(getDb);
 

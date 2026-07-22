@@ -13,7 +13,7 @@ import { SALES_CHANNELS, type ListedSale } from "../main/sales-ipc";
 import { SYNC_CHANNELS } from "../main/sync-ipc";
 import { PRODUCTS_CHANNELS } from "../main/adapters/products/products-ipc";
 import { PROMOTIONS_CHANNELS } from "../main/adapters/promotions/promotions-ipc";
-import { PROVIDER_PURCHASES_CHANNELS } from "../main/provider-purchases-ipc";
+import { PROVIDER_PURCHASES_CHANNELS } from "../main/adapters/provider-purchases/provider-purchases-ipc";
 import { REPORTS_CHANNELS } from "../main/reports-ipc";
 import { SUPPORT_CHANNELS, type OutboxListItem, type OutboxRetryResult } from "../main/support-ipc";
 import type { OfflineState } from "../main/offline-state";
@@ -28,7 +28,7 @@ import type {
   OfflinePromotionUpdateInput,
   OfflinePromotionResult,
 } from "../main/adapters/promotions/promotions-ipc";
-import type { OfflineProviderPurchaseInput, OfflineProviderPurchaseUpdateInput, OfflineProviderPurchaseResult } from "../main/provider-purchases-ipc";
+import type { OfflineProviderPurchaseInput, OfflineProviderPurchaseUpdateInput, OfflineProviderPurchaseResult } from "../main/adapters/provider-purchases/provider-purchases-ipc";
 
 interface MarketDesktopBridge {
   getConfig(): DesktopConfig;

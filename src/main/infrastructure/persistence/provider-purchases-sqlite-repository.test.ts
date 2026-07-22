@@ -1,23 +1,27 @@
+// ---------------------------------------------------------------------------
+// Infrastructure: ProviderPurchasesSqliteRepository integration tests
+//
+// Migrated from src/main/provider-purchases-local.test.ts. Preserves all
+// legacy assertions against create/update/delete/list behavior, outbox
+// enqueue, offline auth, revalidation, and transaction boundaries.
+// ---------------------------------------------------------------------------
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
-import { getDatabasePath, openDatabase, closeDatabase, runMigrations } from "./db";
-import {
-  createOfflineProviderPurchase,
-  updateOfflineProviderPurchase,
-  deleteOfflineProviderPurchase,
-  listOfflineProviderPurchases,
-  OfflineAuthRequiredError,
-} from "./provider-purchases-local";
+import { getDatabasePath, openDatabase, closeDatabase, runMigrations } from "../../db";
+import { OutboxSqliteRepository } from "./outbox-sqlite-repository";
+import { OfflineAuthRequiredError } from "../../offline-auth";
+import { ProviderPurchasesSqliteRepository } from "./provider-purchases-sqlite-repository";
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
 function tempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "market-provider-purchases-test-"));
+  return fs.mkdtempSync(path.join(os.tmpdir(), "market-provider-purchases-hex-test-"));
 }
 
 function cleanup(dir: string): void {
@@ -42,16 +46,19 @@ function createTestDb(dir: string): Database.Database {
 }
 
 // ---------------------------------------------------------------------------
-// createOfflineProviderPurchase — parity tests
+// create — parity tests
 // ---------------------------------------------------------------------------
 
-describe("createOfflineProviderPurchase", () => {
+describe("ProviderPurchasesSqliteRepository.create", () => {
   let dir: string;
   let db: Database.Database;
+  let repo: ProviderPurchasesSqliteRepository;
 
   beforeEach(() => {
     dir = tempDir();
     db = createTestDb(dir);
+    const outboxRepo = new OutboxSqliteRepository(() => db);
+    repo = new ProviderPurchasesSqliteRepository(() => db, outboxRepo);
   });
 
   afterEach(() => {
@@ -60,7 +67,7 @@ describe("createOfflineProviderPurchase", () => {
   });
 
   it("creates a purchase and returns mapped result", () => {
-    const result = createOfflineProviderPurchase(db, {
+    const result = repo.create({
       provider_name: "ACME Corp",
       amount: "1500.00",
       payment_method: "transfer",
@@ -80,7 +87,7 @@ describe("createOfflineProviderPurchase", () => {
     db.prepare("DELETE FROM offline_sessions").run();
 
     expect(() =>
-      createOfflineProviderPurchase(db, {
+      repo.create({
         provider_name: "No Auth",
         amount: "100.00",
       }),
@@ -88,7 +95,7 @@ describe("createOfflineProviderPurchase", () => {
   });
 
   it("enqueues an outbox entry with v4 metadata (local_device_timestamp, actor_user_id, entity_label)", () => {
-    const result = createOfflineProviderPurchase(db, {
+    const result = repo.create({
       provider_name: "Metadata Test",
       amount: "2000.00",
       payment_method: "cash",
@@ -111,7 +118,7 @@ describe("createOfflineProviderPurchase", () => {
   });
 
   it("sets the revalidation_required flag after creating a purchase", () => {
-    createOfflineProviderPurchase(db, {
+    repo.create({
       provider_name: "Revalidation Test",
       amount: "500.00",
     });
@@ -131,16 +138,19 @@ describe("createOfflineProviderPurchase", () => {
 });
 
 // ---------------------------------------------------------------------------
-// updateOfflineProviderPurchase — parity tests
+// update — parity tests
 // ---------------------------------------------------------------------------
 
-describe("updateOfflineProviderPurchase", () => {
+describe("ProviderPurchasesSqliteRepository.update", () => {
   let dir: string;
   let db: Database.Database;
+  let repo: ProviderPurchasesSqliteRepository;
 
   beforeEach(() => {
     dir = tempDir();
     db = createTestDb(dir);
+    const outboxRepo = new OutboxSqliteRepository(() => db);
+    repo = new ProviderPurchasesSqliteRepository(() => db, outboxRepo);
   });
 
   afterEach(() => {
@@ -149,13 +159,13 @@ describe("updateOfflineProviderPurchase", () => {
   });
 
   it("updates a purchase and enqueues an outbox entry with v4 metadata", () => {
-    const createResult = createOfflineProviderPurchase(db, {
+    const createResult = repo.create({
       provider_name: "Original",
       amount: "1000.00",
     });
     expect(createResult.success).toBe(true);
 
-    const updateResult = updateOfflineProviderPurchase(db, createResult.purchase!.id, {
+    const updateResult = repo.update(createResult.purchase!.id, {
       provider_name: "Updated Corp",
       amount: "2000.00",
       payment_method: "card",
@@ -181,35 +191,68 @@ describe("updateOfflineProviderPurchase", () => {
   });
 
   it("throws OfflineAuthRequiredError when no offline session exists", () => {
-    const result = createOfflineProviderPurchase(db, {
+    const result = repo.create({
       provider_name: "Temp",
       amount: "100.00",
     });
     db.prepare("DELETE FROM offline_sessions").run();
 
     expect(() =>
-      updateOfflineProviderPurchase(db, result.purchase!.id, { provider_name: "Fail" }),
+      repo.update(result.purchase!.id, { provider_name: "Fail" }),
     ).toThrow(OfflineAuthRequiredError);
   });
 
   it("returns error when purchase does not exist", () => {
-    const result = updateOfflineProviderPurchase(db, "nonexistent", { provider_name: "Nope" });
+    const result = repo.update("nonexistent", { provider_name: "Nope" });
     expect(result.success).toBe(false);
     expect(result.error).toBe("Provider purchase not found");
+  });
+
+  it("preserves COALESCE behavior — omitted fields keep existing values", () => {
+    const createResult = repo.create({
+      provider_name: "COALESCE Test",
+      amount: "500.00",
+      payment_method: "cash",
+    });
+    const purchaseId = createResult.purchase!.id;
+
+    const updateResult = repo.update(purchaseId, { amount: "999.99" });
+
+    expect(updateResult.success).toBe(true);
+    expect(updateResult.purchase!.providerName).toBe("COALESCE Test"); // preserved
+    expect(updateResult.purchase!.amount).toBe("999.99");               // updated
+    expect(updateResult.purchase!.paymentMethod).toBe("cash");          // preserved via COALESCE
+  });
+
+  it("handles explicit payment_method: null preserving COALESCE behavior", () => {
+    const createResult = repo.create({
+      provider_name: "Null Test",
+      amount: "500.00",
+      payment_method: "transfer",
+    });
+    const purchaseId = createResult.purchase!.id;
+
+    // With legacy COALESCE semantics, COALESCE(null, payment_method) = payment_method (preserves existing)
+    const updateResult = repo.update(purchaseId, { payment_method: null });
+    expect(updateResult.success).toBe(true);
+    expect(updateResult.purchase!.paymentMethod).toBe("transfer"); // preserved by COALESCE
   });
 });
 
 // ---------------------------------------------------------------------------
-// deleteOfflineProviderPurchase — parity tests (before snapshot)
+// delete — parity tests (before snapshot)
 // ---------------------------------------------------------------------------
 
-describe("deleteOfflineProviderPurchase", () => {
+describe("ProviderPurchasesSqliteRepository.delete", () => {
   let dir: string;
   let db: Database.Database;
+  let repo: ProviderPurchasesSqliteRepository;
 
   beforeEach(() => {
     dir = tempDir();
     db = createTestDb(dir);
+    const outboxRepo = new OutboxSqliteRepository(() => db);
+    repo = new ProviderPurchasesSqliteRepository(() => db, outboxRepo);
   });
 
   afterEach(() => {
@@ -218,7 +261,7 @@ describe("deleteOfflineProviderPurchase", () => {
   });
 
   it("deletes a purchase and enqueues an outbox entry with before snapshot", () => {
-    const createResult = createOfflineProviderPurchase(db, {
+    const createResult = repo.create({
       provider_name: "To Delete",
       amount: "3000.00",
       payment_method: "transfer",
@@ -226,7 +269,7 @@ describe("deleteOfflineProviderPurchase", () => {
     expect(createResult.success).toBe(true);
     const purchaseId = createResult.purchase!.id;
 
-    const deleteResult = deleteOfflineProviderPurchase(db, purchaseId);
+    const deleteResult = repo.delete(purchaseId);
     expect(deleteResult.success).toBe(true);
 
     // Verify outbox entry for delete with v4 metadata
@@ -248,29 +291,86 @@ describe("deleteOfflineProviderPurchase", () => {
   });
 
   it("throws OfflineAuthRequiredError when no offline session exists", () => {
-    const result = createOfflineProviderPurchase(db, {
+    const result = repo.create({
       provider_name: "Temp",
       amount: "100.00",
     });
     db.prepare("DELETE FROM offline_sessions").run();
 
     expect(() =>
-      deleteOfflineProviderPurchase(db, result.purchase!.id),
+      repo.delete(result.purchase!.id),
     ).toThrow(OfflineAuthRequiredError);
   });
 
   it("returns error when purchase does not exist", () => {
-    const result = deleteOfflineProviderPurchase(db, "nonexistent");
+    const result = repo.delete("nonexistent");
     expect(result.success).toBe(false);
     expect(result.error).toBe("Provider purchase not found");
+  });
+
+  it("returns legacy result { success: true } (no 'deleted' prop)", () => {
+    const createResult = repo.create({
+      provider_name: "Legacy Delete",
+      amount: "100.00",
+    });
+
+    const deleteResult = repo.delete(createResult.purchase!.id);
+    expect(deleteResult.success).toBe(true);
+    expect(deleteResult).toHaveProperty("success", true);
+    // Legacy shape: no 'purchase', no 'deleted', no 'before' in result
+    // The before snapshot lives only in the outbox payload
+    expect((deleteResult as unknown as Record<string, unknown>).deleted).toBeUndefined();
+    expect((deleteResult as unknown as Record<string, unknown>).purchase).toBeUndefined();
   });
 });
 
 // ---------------------------------------------------------------------------
-// listOfflineProviderPurchases
+// list — parity tests
 // ---------------------------------------------------------------------------
 
-describe("listOfflineProviderPurchases", () => {
+describe("ProviderPurchasesSqliteRepository.list", () => {
+  let dir: string;
+  let db: Database.Database;
+  let repo: ProviderPurchasesSqliteRepository;
+
+  beforeEach(() => {
+    dir = tempDir();
+    db = createTestDb(dir);
+    const outboxRepo = new OutboxSqliteRepository(() => db);
+    repo = new ProviderPurchasesSqliteRepository(() => db, outboxRepo);
+  });
+
+  afterEach(() => {
+    closeDatabase(db);
+    cleanup(dir);
+  });
+
+  it("returns all purchases ordered by created_at DESC", () => {
+    repo.create({ provider_name: "Beta", amount: "100.00" });
+    repo.create({ provider_name: "Alpha", amount: "200.00" });
+    repo.create({ provider_name: "Gamma", amount: "300.00" });
+
+    const results = repo.list();
+    expect(results).toHaveLength(3);
+    expect(results.every((r) => r.success)).toBe(true);
+    // DESC ordering is date-lexicographic; all three exist
+    const names = results.map((r) => r.purchase!.providerName);
+    expect(names).toContain("Alpha");
+    expect(names).toContain("Beta");
+    expect(names).toContain("Gamma");
+  });
+
+  it("returns empty array when no purchases exist", () => {
+    const results = repo.list();
+    expect(results).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Transaction rollback tests
+// ---------------------------------------------------------------------------
+
+describe("ProviderPurchasesSqliteRepository rollback", () => {
   let dir: string;
   let db: Database.Database;
 
@@ -284,23 +384,22 @@ describe("listOfflineProviderPurchases", () => {
     cleanup(dir);
   });
 
-  it("returns all purchases ordered by created_at DESC", () => {
-    createOfflineProviderPurchase(db, { provider_name: "Beta", amount: "100.00" });
-    createOfflineProviderPurchase(db, { provider_name: "Alpha", amount: "200.00" });
-    createOfflineProviderPurchase(db, { provider_name: "Gamma", amount: "300.00" });
+  it("rolls back create when outbox enqueue fails", () => {
+    // Simulate outbox failure by dropping the outbox table
+    db.prepare("DROP TABLE outbox").run();
 
-    const results = listOfflineProviderPurchases(db);
-    expect(results).toHaveLength(3);
-    expect(results.every((r) => r.success)).toBe(true);
-    // DESC ordering is date-lexicographic; all three exist
-    const names = results.map((r) => r.purchase!.providerName);
-    expect(names).toContain("Alpha");
-    expect(names).toContain("Beta");
-    expect(names).toContain("Gamma");
-  });
+    const outboxRepo = new OutboxSqliteRepository(() => db);
+    const repo = new ProviderPurchasesSqliteRepository(() => db, outboxRepo);
 
-  it("returns empty array when no purchases exist", () => {
-    const results = listOfflineProviderPurchases(db);
-    expect(results).toEqual([]);
+    expect(() =>
+      repo.create({
+        provider_name: "Should Rollback",
+        amount: "999.99",
+      }),
+    ).toThrow();
+
+    // Row should not exist — transaction rolled back
+    const rows = db.prepare("SELECT * FROM provider_purchases").all() as unknown[];
+    expect(rows).toHaveLength(0);
   });
 });
