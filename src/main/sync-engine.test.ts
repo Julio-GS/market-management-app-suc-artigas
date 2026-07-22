@@ -207,12 +207,8 @@ describe("sync-engine", () => {
 
       const pushFn: SyncPushFn = vi.fn().mockImplementation(async (entries: unknown[]) => {
         const e = entries as { id: string; idempotency_key: string }[];
-        const results = e.map((entry, idx) => {
-          if (idx < 6) {
-            return { id: entry.id, idempotency_key: entry.idempotency_key, status: "accepted" as const };
-          }
-          if (idx === 6) {
-            // entry 7 (index 6) fails with a permanent error
+        const results = e.map((entry) => {
+          if (entry.id === "out-7") {
             return {
               id: entry.id,
               idempotency_key: entry.idempotency_key,
@@ -220,8 +216,12 @@ describe("sync-engine", () => {
               reason: "Invalid payload",
             };
           }
-          // entries 8+ not reached due to blocking
-          return { id: entry.id, idempotency_key: entry.idempotency_key, status: "blocked" as const };
+
+          return {
+            id: entry.id,
+            idempotency_key: entry.idempotency_key,
+            status: "accepted" as const,
+          };
         });
         return { results };
       });

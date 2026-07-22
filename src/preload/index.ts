@@ -2,7 +2,12 @@ import { contextBridge, ipcRenderer } from "electron";
 import { decodeDesktopConfig, type DesktopConfig } from "../main/config";
 import { UPDATE_CHANNELS, type UpdateEventPayload } from "../main/updater";
 import type { UpdateStatus } from "../main/updater-status";
-import { OFFLINE_CHANNELS, type OfflineLoginParams, type OfflineLoginIpcResult } from "../main/offline-ipc";
+import {
+  OFFLINE_CHANNELS,
+  type OfflineLoginParams,
+  type OfflineLoginIpcResult,
+  type OfflineSessionIpcResult,
+} from "../main/offline-ipc";
 import { BOOTSTRAP_CHANNELS } from "../main/bootstrap-ipc";
 import { SALES_CHANNELS, type ListedSale } from "../main/sales-ipc";
 import { SYNC_CHANNELS } from "../main/sync-ipc";
@@ -13,7 +18,6 @@ import { REPORTS_CHANNELS } from "../main/reports-ipc";
 import { SUPPORT_CHANNELS, type OutboxListItem, type OutboxRetryResult } from "../main/support-ipc";
 import type { OfflineState } from "../main/offline-state";
 import type { BootstrapResult } from "../main/bootstrap";
-import type { OfflineSession } from "../main/offline-auth";
 import type { OfflineSaleInput, OfflineSaleIpcResult } from "../main/sales-ipc";
 import type { SyncStatePayload } from "../main/sync-ipc";
 import type { PullResult } from "../main/pull-reconciliation";
@@ -34,7 +38,7 @@ interface MarketDesktopBridge {
   };
   offline: {
     getState(): Promise<OfflineState>;
-    getSession(): Promise<OfflineSession | null>;
+    getSession(): Promise<OfflineSessionIpcResult | null>;
     login(params: OfflineLoginParams): Promise<OfflineLoginIpcResult>;
   };
   bootstrap: {
@@ -120,7 +124,7 @@ const marketDesktop: MarketDesktopBridge = {
   },
   offline: {
     getState: () => ipcRenderer.invoke(OFFLINE_CHANNELS.GET_STATE) as Promise<OfflineState>,
-    getSession: () => ipcRenderer.invoke(OFFLINE_CHANNELS.GET_SESSION) as Promise<OfflineSession | null>,
+    getSession: () => ipcRenderer.invoke(OFFLINE_CHANNELS.GET_SESSION) as Promise<OfflineSessionIpcResult | null>,
     login: (params: OfflineLoginParams) => ipcRenderer.invoke(OFFLINE_CHANNELS.LOGIN, params) as Promise<OfflineLoginIpcResult>,
   },
   bootstrap: {

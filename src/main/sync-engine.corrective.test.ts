@@ -560,5 +560,68 @@ describe("sync-engine-corrective", () => {
       const entry = db.prepare("SELECT * FROM outbox WHERE id = 'out-ab-2'").get() as OutboxEntryRow;
       expect(entry.status).toBe("blocked_auth");
     });
+
+    it("stops replay after auth_blocked and leaves later entries pending without sending them", async () => {
+      insertOutboxEntry(db, { id: "out-ab-stop-1", status: "pending" });
+      insertOutboxEntry(db, { id: "out-ab-stop-2", status: "pending" });
+
+      const pushFn: SyncPushFn = vi.fn().mockImplementation(async (entries: OutboxEntryRow[]) => ({
+        results: entries.map((entry, index) =>
+          index === 0
+            ? { id: entry.id, idempotency_key: entry.idempotency_key, status: "auth_blocked", reason: "Token expired" }
+            : { id: entry.id, idempotency_key: entry.idempotency_key, status: "accepted" },
+        ),
+      }));
+
+      const revalidateFn: RevalidateFn = vi.fn().mockResolvedValue({ valid: true, user_id: "user-1" });
+
+      const result = await replayOutbox(db, pushFn, revalidateFn);
+
+      expect(pushFn).toHaveBeenCalledTimes(1);
+      const pushedEntries = (pushFn as ReturnType<typeof vi.fn>).mock.calls[0][0] as OutboxEntryRow[];
+      expect(pushedEntries).toHaveLength(1);
+      expect(pushedEntries[0].id).toBe("out-ab-stop-1");
+      expect(result.blocked).toBe(2);
+
+      const first = db.prepare("SELECT status FROM outbox WHERE id = 'out-ab-stop-1'").get() as { status: string };
+      const second = db.prepare("SELECT status FROM outbox WHERE id = 'out-ab-stop-2'").get() as { status: string };
+      expect(first.status).toBe("blocked_auth");
+      expect(second.status).toBe("pending");
+    });
+  });
+
+  describe("missing local conflict timestamp handling", () => {
+    it("blocks LWW resolution when local_device_timestamp is null instead of falling back to created_at", async () => {
+      insertOutboxEntry(db, {
+        id: "out-old-row-1",
+        operation_type: "product_update",
+        aggregate_type: "product",
+        aggregate_id: "prod-old-1",
+        status: "pending",
+        created_at: "2024-01-01T00:00:00.000Z",
+        local_device_timestamp: null,
+      });
+
+      const pushFn: SyncPushFn = vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: "out-old-row-1",
+            idempotency_key: "inst-1:out-old-row-1",
+            status: "conflict",
+            reason: "Version mismatch",
+            server_version: "2024-01-02T00:00:00.000Z",
+          },
+        ],
+      });
+
+      const revalidateFn: RevalidateFn = vi.fn().mockResolvedValue({ valid: true, user_id: "user-1" });
+
+      const result = await replayOutbox(db, pushFn, revalidateFn);
+
+      expect(result.blocked).toBe(1);
+      const entry = db.prepare("SELECT status, server_result FROM outbox WHERE id = 'out-old-row-1'").get() as { status: string; server_result: string | null };
+      expect(entry.status).toBe("blocked_conflict");
+      expect(entry.server_result).toContain("Version mismatch");
+    });
   });
 });

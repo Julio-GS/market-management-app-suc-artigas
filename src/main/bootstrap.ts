@@ -228,10 +228,15 @@ export function ingestBootstrapSnapshot(
     // Offline session — record the user who bootstrapped
     const now = new Date().toISOString();
     db.prepare(`
-      INSERT OR REPLACE INTO offline_sessions
-        (user_id, username, last_validated_at, created_at, updated_at)
+      INSERT INTO offline_sessions
+        (user_id, username, last_validated_at, created_at, updated_at, password_hash)
       VALUES
-        (@user_id, @username, @last_validated_at, @created_at, @updated_at)
+        (@user_id, @username, @last_validated_at, @created_at, @updated_at, NULL)
+      ON CONFLICT(user_id) DO UPDATE SET
+        username = excluded.username,
+        last_validated_at = excluded.last_validated_at,
+        updated_at = excluded.updated_at,
+        password_hash = offline_sessions.password_hash
     `).run({
       user_id: snapshot.user_profile.id,
       username: snapshot.user_profile.username,

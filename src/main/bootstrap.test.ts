@@ -250,6 +250,48 @@ describe("bootstrap", () => {
       expect(products).toHaveLength(1);
       db.close();
     });
+
+    it("preserves an existing password_hash when bootstrap refreshes the offline session", () => {
+      const db = createTestDb();
+      const auth = db.prepare(`
+        INSERT INTO offline_sessions
+          (user_id, username, last_validated_at, created_at, updated_at, password_hash)
+        VALUES
+          ('u1', 'cashier', '2024-01-10T00:00:00.000Z', '2024-01-01T00:00:00.000Z', '2024-01-10T00:00:00.000Z', 'salt:hash')
+      `);
+      auth.run();
+
+      ingestBootstrapSnapshot(db, makeSnapshot());
+
+      const session = db.prepare("SELECT password_hash FROM offline_sessions WHERE user_id = 'u1'").get() as { password_hash: string | null };
+      expect(session.password_hash).toBe("salt:hash");
+      db.close();
+    });
+  });
+
+  describe("offline login continuity", () => {
+    it("keeps offline login working after bootstrap refresh preserves the cached password hash", async () => {
+      const db = createTestDb();
+      const { hashPassword, verifyOfflineCredentials } = await import("./offline-auth");
+      const passwordHash = hashPassword("secret-123");
+
+      db.prepare(`
+        INSERT INTO offline_sessions
+          (user_id, username, last_validated_at, created_at, updated_at, password_hash)
+        VALUES
+          ('u1', 'cashier', '2024-01-10T00:00:00.000Z', '2024-01-01T00:00:00.000Z', '2024-01-10T00:00:00.000Z', ?)
+      `).run(passwordHash);
+
+      ingestBootstrapSnapshot(db, makeSnapshot());
+
+      expect(verifyOfflineCredentials(db, "cashier", "secret-123")).toEqual({
+        success: true,
+        userId: "u1",
+        username: "cashier",
+        offlineMode: true,
+      });
+      db.close();
+    });
   });
 
   describe("startBootstrap / resumeBootstrap", () => {

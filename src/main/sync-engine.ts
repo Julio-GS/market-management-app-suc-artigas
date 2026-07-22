@@ -651,53 +651,43 @@ export async function replayOutbox(
   }
 
   // -------------------------------------------------------------------
-  // 3. Mark collected entries as in_flight before pushing
+  // 3. Push entries in order and stop after a blocking result
   // -------------------------------------------------------------------
-  const now = new Date().toISOString();
   const markInFlight = db.prepare(`
     UPDATE outbox
     SET status = 'in_flight', updated_at = ?
     WHERE id = ?
   `);
-  for (const e of pending) {
-    markInFlight.run(now, e.id);
-  }
 
-  // -------------------------------------------------------------------
-  // 4. Push batch
-  // -------------------------------------------------------------------
-  let pushResponse: SyncPushResponse;
-  try {
-    pushResponse = await pushFn(pending);
-  } catch (err) {
-    // Network-level failure — mark all as retry_wait
-    const reason = err instanceof Error ? err.message : String(err);
-    for (const entry of pending) {
-      markOutboxEntry(db, entry.id, {
-        status: "retry_wait",
-        last_error: reason,
-      });
-    }
-    result.failed = pending.length;
-    return result;
-  }
-
-  // -------------------------------------------------------------------
-  // 5. Process per-entry results
-  // -------------------------------------------------------------------
   let blocked = false;
 
   for (let i = 0; i < pending.length; i++) {
     const entry = pending[i];
-    const entryResult = pushResponse.results[i];
 
     if (blocked) {
-      // Later entries remain pending
+      // Later entries remain pending and must not be sent.
       markOutboxEntry(db, entry.id, {
         status: "pending",
         last_error: "Blocked by a previous entry failure.",
       });
       result.blocked += 1;
+      continue;
+    }
+
+    markInFlight.run(new Date().toISOString(), entry.id);
+
+    let entryResult: SyncPushResult | undefined;
+    try {
+      const pushResponse = await pushFn([entry]);
+      entryResult = pushResponse.results[0];
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      markOutboxEntry(db, entry.id, {
+        status: "retry_wait",
+        last_error: reason,
+      });
+      result.failed += 1;
+      blocked = true;
       continue;
     }
 
@@ -780,7 +770,7 @@ export async function replayOutbox(
           entry.aggregate_type === "promotion" ||
           entry.aggregate_type === "provider_purchase"
         ) {
-          const localTs = entry.local_device_timestamp ?? entry.created_at;
+          const localTs = entry.local_device_timestamp;
           const serverTs = entryResult.server_version ?? null;
 
           const lwwResult = resolveLww(localTs, serverTs);
@@ -884,6 +874,7 @@ export async function replayOutbox(
           server_result: JSON.stringify(entryResult),
         });
         result.blocked += 1;
+        blocked = true;
         break;
 
       default:
