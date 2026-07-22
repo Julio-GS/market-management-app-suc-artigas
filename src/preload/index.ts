@@ -12,7 +12,7 @@ import { BOOTSTRAP_CHANNELS } from "../main/bootstrap-ipc";
 import { SALES_CHANNELS, type ListedSale } from "../main/sales-ipc";
 import { SYNC_CHANNELS } from "../main/sync-ipc";
 import { PRODUCTS_CHANNELS } from "../main/adapters/products/products-ipc";
-import { PROMOTIONS_CHANNELS } from "../main/promotions-ipc";
+import { PROMOTIONS_CHANNELS } from "../main/adapters/promotions/promotions-ipc";
 import { PROVIDER_PURCHASES_CHANNELS } from "../main/provider-purchases-ipc";
 import { REPORTS_CHANNELS } from "../main/reports-ipc";
 import { SUPPORT_CHANNELS, type OutboxListItem, type OutboxRetryResult } from "../main/support-ipc";
@@ -23,7 +23,11 @@ import type { SyncStatePayload } from "../main/sync-ipc";
 import type { PullResult } from "../main/pull-reconciliation";
 import type { ReplayResult } from "../main/sync-engine";
 import type { OfflineProductInput, OfflineProductUpdateInput, OfflineProductResult } from "../main/adapters/products/products-ipc";
-import type { OfflinePromotionInput, OfflinePromotionUpdateInput, OfflinePromotionResult } from "../main/promotions-ipc";
+import type {
+  OfflinePromotionInput,
+  OfflinePromotionUpdateInput,
+  OfflinePromotionResult,
+} from "../main/adapters/promotions/promotions-ipc";
 import type { OfflineProviderPurchaseInput, OfflineProviderPurchaseUpdateInput, OfflineProviderPurchaseResult } from "../main/provider-purchases-ipc";
 
 interface MarketDesktopBridge {
