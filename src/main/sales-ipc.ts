@@ -2,13 +2,16 @@ import { ipcMain } from "electron";
 import type Database from "better-sqlite3";
 import {
   completeOfflineSale,
+  listOfflineSales,
   FiscalBlockedError,
+  OfflineAuthRequiredError,
   type OfflineSaleInput,
   type OfflineSaleResult,
+  type ListedSale,
 } from "./sales-local";
 
 // Re-export for preload consumers
-export type { OfflineSaleInput };
+export type { OfflineSaleInput, ListedSale };
 
 // ---------------------------------------------------------------------------
 // Minimal runtime payload validation
@@ -34,7 +37,11 @@ export function validateSaleInput(
 
   for (let i = 0; i < data.items.length; i++) {
     const item = data.items[i] as Record<string, unknown> | undefined;
-    if (!item || typeof item.productId !== "string" || item.productId.length === 0) {
+    if (
+      !item ||
+      typeof item.productId !== "string" ||
+      item.productId.trim().length === 0
+    ) {
       return { valid: false, error: `Item ${i + 1} must have a valid productId` };
     }
     if (typeof item.quantity !== "number" || item.quantity <= 0) {
@@ -77,6 +84,7 @@ export function validateSaleInput(
 export const SALES_CHANNELS = {
   COMPLETE_SALE: "offline:sales:complete",
   GET_SALE: "offline:sales:get",
+  LIST_SALES: "offline:sales:list",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -131,6 +139,13 @@ export function registerSalesIpc(getDb: () => Database.Database): void {
             errorCode: "FISCAL_BLOCKED",
           };
         }
+        if (err instanceof OfflineAuthRequiredError) {
+          return {
+            success: false,
+            error: err.message,
+            errorCode: "OFFLINE_AUTH_REQUIRED",
+          };
+        }
         const message = err instanceof Error ? err.message : "Sale failed";
         return {
           success: false,
@@ -163,25 +178,6 @@ export function registerSalesIpc(getDb: () => Database.Database): void {
           return { success: false, error: "Sale not found", errorCode: "NOT_FOUND" };
         }
 
-        // Get items
-        const items = db.prepare(`
-          SELECT product_id, name, description, quantity, unit_price, subtotal, discount_amount
-          FROM sale_items WHERE sale_id = ?
-        `).all(saleId) as {
-          product_id: string;
-          name: string;
-          description: string | null;
-          quantity: number;
-          unit_price: string;
-          subtotal: string;
-          discount_amount: string;
-        }[];
-
-        // Get payments
-        const payments = db.prepare(`
-          SELECT method, amount FROM sale_payments WHERE sale_id = ?
-        `).all(saleId) as { method: string; amount: string }[];
-
         return {
           success: true,
           sale: {
@@ -198,6 +194,19 @@ export function registerSalesIpc(getDb: () => Database.Database): void {
       }
     },
   );
+
+  // -- sales:list ----------------------------------------------------------
+  ipcMain.handle(
+    SALES_CHANNELS.LIST_SALES,
+    (): ListedSale[] => {
+      try {
+        const db = getDb();
+        return listOfflineSales(db);
+      } catch {
+        return [];
+      }
+    },
+  );
 }
 
 /**
@@ -206,4 +215,5 @@ export function registerSalesIpc(getDb: () => Database.Database): void {
 export function unregisterSalesIpc(): void {
   ipcMain.removeHandler(SALES_CHANNELS.COMPLETE_SALE);
   ipcMain.removeHandler(SALES_CHANNELS.GET_SALE);
+  ipcMain.removeHandler(SALES_CHANNELS.LIST_SALES);
 }

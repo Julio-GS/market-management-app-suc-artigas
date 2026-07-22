@@ -1,5 +1,15 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import {
+  getOfflineSession,
+  assertOfflineEligible,
+  getActorUserId,
+  markOfflineWorkRequiresRevalidation,
+  OfflineAuthRequiredError,
+} from "./offline-auth";
+
+// Re-export for IPC error mapping
+export { OfflineAuthRequiredError };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,6 +76,45 @@ function mapRow(row: OfflineProviderPurchaseRow): OfflineProviderPurchaseResult[
 }
 
 // ---------------------------------------------------------------------------
+// Outbox insert helper (shared across create/update/delete)
+// ---------------------------------------------------------------------------
+
+function insertProviderPurchaseOutbox(
+  db: Database.Database,
+  opType: string,
+  purchaseId: string,
+  payload: unknown,
+  createdAt: string,
+  installationId: string,
+  actorUserId: string | null,
+  entityLabel: string,
+): void {
+  const outboxId = randomUUID();
+  const idempotencyKey = `${installationId}:${outboxId}`;
+
+  db.prepare(`
+    INSERT INTO outbox
+      (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
+       payload, status, attempt_count, created_at, updated_at,
+       local_device_timestamp, actor_user_id, entity_label)
+    VALUES
+      (@id, @idempotency_key, @operation_type, 'provider_purchase', @aggregate_id,
+       @payload, 'pending', 0, @created_at, @created_at,
+       @local_device_timestamp, @actor_user_id, @entity_label)
+  `).run({
+    id: outboxId,
+    idempotency_key: idempotencyKey,
+    operation_type: opType,
+    aggregate_id: purchaseId,
+    payload: JSON.stringify(payload),
+    created_at: createdAt,
+    local_device_timestamp: createdAt,
+    actor_user_id: actorUserId,
+    entity_label: entityLabel,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------
 
@@ -73,9 +122,12 @@ export function createOfflineProviderPurchase(
   db: Database.Database,
   input: OfflineProviderPurchaseInput,
 ): OfflineProviderPurchaseResult {
+  assertOfflineEligible(db);
+
   const purchaseId = randomUUID();
   const createdAt = now();
   const installationId = getInstallationId(db);
+  const actorUserId = getActorUserId(db);
 
   const run = db.transaction(() => {
     db.prepare(`
@@ -91,30 +143,19 @@ export function createOfflineProviderPurchase(
       created_at: createdAt,
     });
 
-    const outboxId = randomUUID();
-    const idempotencyKey = `${installationId}:${outboxId}`;
+    insertProviderPurchaseOutbox(
+      db, "provider_purchase_create", purchaseId,
+      {
+        id: purchaseId,
+        provider_name: input.provider_name,
+        amount: input.amount,
+        payment_method: input.payment_method ?? null,
+      },
+      createdAt, installationId, actorUserId,
+      `Provider purchase create: ${input.provider_name}`,
+    );
 
-    const payload = JSON.stringify({
-      id: purchaseId,
-      provider_name: input.provider_name,
-      amount: input.amount,
-      payment_method: input.payment_method ?? null,
-    });
-
-    db.prepare(`
-      INSERT INTO outbox
-        (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
-         payload, status, attempt_count, created_at, updated_at)
-      VALUES
-        (@id, @idempotency_key, 'provider_purchase_create', 'provider_purchase', @aggregate_id,
-         @payload, 'pending', 0, @created_at, @created_at)
-    `).run({
-      id: outboxId,
-      idempotency_key: idempotencyKey,
-      aggregate_id: purchaseId,
-      payload,
-      created_at: createdAt,
-    });
+    markOfflineWorkRequiresRevalidation(db);
   });
 
   run();
@@ -132,8 +173,11 @@ export function updateOfflineProviderPurchase(
   purchaseId: string,
   input: OfflineProviderPurchaseUpdateInput,
 ): OfflineProviderPurchaseResult {
+  assertOfflineEligible(db);
+
   const createdAt = now();
   const installationId = getInstallationId(db);
+  const actorUserId = getActorUserId(db);
 
   const existing = db.prepare("SELECT * FROM provider_purchases WHERE id = ?").get(purchaseId) as OfflineProviderPurchaseRow | undefined;
   if (!existing) {
@@ -156,28 +200,18 @@ export function updateOfflineProviderPurchase(
       updated_at: createdAt,
     });
 
-    const outboxId = randomUUID();
-    const idempotencyKey = `${installationId}:${outboxId}`;
-
     const payload: Record<string, unknown> = { id: purchaseId };
     if (input.provider_name !== undefined) payload.provider_name = input.provider_name;
     if (input.amount !== undefined) payload.amount = input.amount;
     if (input.payment_method !== undefined) payload.payment_method = input.payment_method;
 
-    db.prepare(`
-      INSERT INTO outbox
-        (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
-         payload, status, attempt_count, created_at, updated_at)
-      VALUES
-        (@id, @idempotency_key, 'provider_purchase_update', 'provider_purchase', @aggregate_id,
-         @payload, 'pending', 0, @created_at, @created_at)
-    `).run({
-      id: outboxId,
-      idempotency_key: idempotencyKey,
-      aggregate_id: purchaseId,
-      payload: JSON.stringify(payload),
-      created_at: createdAt,
-    });
+    insertProviderPurchaseOutbox(
+      db, "provider_purchase_update", purchaseId, payload,
+      createdAt, installationId, actorUserId,
+      `Provider purchase update: ${purchaseId.slice(0, 8)}`,
+    );
+
+    markOfflineWorkRequiresRevalidation(db);
   });
 
   run();
@@ -199,33 +233,34 @@ export function deleteOfflineProviderPurchase(
   db: Database.Database,
   purchaseId: string,
 ): OfflineProviderPurchaseResult {
+  assertOfflineEligible(db);
+
   const createdAt = now();
   const installationId = getInstallationId(db);
+  const actorUserId = getActorUserId(db);
 
   const existing = db.prepare("SELECT * FROM provider_purchases WHERE id = ?").get(purchaseId) as OfflineProviderPurchaseRow | undefined;
   if (!existing) {
     return { success: false, error: "Provider purchase not found" };
   }
 
+  // Snapshot for recovery on rejection
+  const beforeSnapshot = mapRow(existing)!;
+
   const run = db.transaction(() => {
     db.prepare("DELETE FROM provider_purchases WHERE id = ?").run(purchaseId);
 
-    const outboxId = randomUUID();
-    const idempotencyKey = `${installationId}:${outboxId}`;
+    insertProviderPurchaseOutbox(
+      db, "provider_purchase_delete", purchaseId,
+      {
+        id: purchaseId,
+        before: beforeSnapshot,
+      },
+      createdAt, installationId, actorUserId,
+      `Provider purchase delete: ${beforeSnapshot.providerName}`,
+    );
 
-    db.prepare(`
-      INSERT INTO outbox
-        (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
-         payload, status, attempt_count, created_at, updated_at)
-      VALUES
-        (@id, @idempotency_key, 'provider_purchase_delete', 'provider_purchase', @aggregate_id,
-         '{}', 'pending', 0, @created_at, @created_at)
-    `).run({
-      id: outboxId,
-      idempotency_key: idempotencyKey,
-      aggregate_id: purchaseId,
-      created_at: createdAt,
-    });
+    markOfflineWorkRequiresRevalidation(db);
   });
 
   run();

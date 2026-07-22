@@ -2,9 +2,9 @@ import { contextBridge, ipcRenderer } from "electron";
 import { decodeDesktopConfig, type DesktopConfig } from "../main/config";
 import { UPDATE_CHANNELS, type UpdateEventPayload } from "../main/updater";
 import type { UpdateStatus } from "../main/updater-status";
-import { OFFLINE_CHANNELS } from "../main/offline-ipc";
+import { OFFLINE_CHANNELS, type OfflineLoginParams, type OfflineLoginIpcResult } from "../main/offline-ipc";
 import { BOOTSTRAP_CHANNELS } from "../main/bootstrap-ipc";
-import { SALES_CHANNELS } from "../main/sales-ipc";
+import { SALES_CHANNELS, type ListedSale } from "../main/sales-ipc";
 import { SYNC_CHANNELS } from "../main/sync-ipc";
 import { PRODUCTS_CHANNELS } from "../main/products-ipc";
 import { PROMOTIONS_CHANNELS } from "../main/promotions-ipc";
@@ -13,6 +13,7 @@ import { REPORTS_CHANNELS } from "../main/reports-ipc";
 import { SUPPORT_CHANNELS, type OutboxListItem, type OutboxRetryResult } from "../main/support-ipc";
 import type { OfflineState } from "../main/offline-state";
 import type { BootstrapResult } from "../main/bootstrap";
+import type { OfflineSession } from "../main/offline-auth";
 import type { OfflineSaleInput, OfflineSaleIpcResult } from "../main/sales-ipc";
 import type { SyncStatePayload } from "../main/sync-ipc";
 import type { PullResult } from "../main/pull-reconciliation";
@@ -33,6 +34,8 @@ interface MarketDesktopBridge {
   };
   offline: {
     getState(): Promise<OfflineState>;
+    getSession(): Promise<OfflineSession | null>;
+    login(params: OfflineLoginParams): Promise<OfflineLoginIpcResult>;
   };
   bootstrap: {
     status(): Promise<BootstrapResult>;
@@ -42,6 +45,7 @@ interface MarketDesktopBridge {
   sales: {
     complete(input: OfflineSaleInput): Promise<OfflineSaleIpcResult>;
     get(saleId: string): Promise<OfflineSaleIpcResult>;
+        list(): Promise<ListedSale[]>;
   };
   sync: {
     getState(): Promise<SyncStatePayload>;
@@ -75,7 +79,9 @@ interface MarketDesktopBridge {
   };
   support: {
     listOutbox(filter?: { status?: string }): Promise<OutboxListItem[]>;
-    retryOutbox(id: string): Promise<OutboxRetryResult>;
+    retryOutbox(id: string, opts?: { confirmManualFix?: boolean }): Promise<OutboxRetryResult>;
+    retrySale(saleId: string): Promise<OutboxRetryResult>;
+    resolveConflict(outboxId: string, params: { resolution: "keep_local" | "use_server" }): Promise<OutboxRetryResult>;
     exportOutbox(): Promise<OutboxListItem[]>;
   };
 }
@@ -114,6 +120,8 @@ const marketDesktop: MarketDesktopBridge = {
   },
   offline: {
     getState: () => ipcRenderer.invoke(OFFLINE_CHANNELS.GET_STATE) as Promise<OfflineState>,
+    getSession: () => ipcRenderer.invoke(OFFLINE_CHANNELS.GET_SESSION) as Promise<OfflineSession | null>,
+    login: (params: OfflineLoginParams) => ipcRenderer.invoke(OFFLINE_CHANNELS.LOGIN, params) as Promise<OfflineLoginIpcResult>,
   },
   bootstrap: {
     status: () => ipcRenderer.invoke(BOOTSTRAP_CHANNELS.BOOTSTRAP_STATUS) as Promise<BootstrapResult>,
@@ -123,6 +131,7 @@ const marketDesktop: MarketDesktopBridge = {
   sales: {
     complete: (input) => ipcRenderer.invoke(SALES_CHANNELS.COMPLETE_SALE, input) as Promise<OfflineSaleIpcResult>,
     get: (saleId) => ipcRenderer.invoke(SALES_CHANNELS.GET_SALE, saleId) as Promise<OfflineSaleIpcResult>,
+        list: () => ipcRenderer.invoke(SALES_CHANNELS.LIST_SALES) as Promise<ListedSale[]>,
   },
   sync: {
     getState: () => ipcRenderer.invoke(SYNC_CHANNELS.GET_SYNC_STATE) as Promise<SyncStatePayload>,
@@ -158,7 +167,11 @@ const marketDesktop: MarketDesktopBridge = {
   },
   support: {
     listOutbox: (filter) => ipcRenderer.invoke(SUPPORT_CHANNELS.LIST_OUTBOX, filter) as Promise<OutboxListItem[]>,
-    retryOutbox: (id) => ipcRenderer.invoke(SUPPORT_CHANNELS.RETRY_OUTBOX, id) as Promise<OutboxRetryResult>,
+    retryOutbox: (id: string, opts?: { confirmManualFix?: boolean }) =>
+      ipcRenderer.invoke(SUPPORT_CHANNELS.RETRY_OUTBOX, id, opts) as Promise<OutboxRetryResult>,
+    retrySale: (saleId: string) => ipcRenderer.invoke(SUPPORT_CHANNELS.RETRY_SALE, saleId) as Promise<OutboxRetryResult>,
+    resolveConflict: (outboxId: string, params: { resolution: "keep_local" | "use_server" }) =>
+      ipcRenderer.invoke(SUPPORT_CHANNELS.RESOLVE_CONFLICT, outboxId, params) as Promise<OutboxRetryResult>,
     exportOutbox: () => ipcRenderer.invoke(SUPPORT_CHANNELS.EXPORT_OUTBOX) as Promise<OutboxListItem[]>,
   },
 };

@@ -1,6 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
+// Mock pull-reconciliation module so we can verify it is NOT called when push is blocked
+// ---------------------------------------------------------------------------
+
+const { mockPullAndApply, mockReplayOutbox } = vi.hoisted(() => ({
+  mockPullAndApply: vi.fn(),
+  mockReplayOutbox: vi.fn(),
+}));
+
+vi.mock("./pull-reconciliation", () => ({
+  pullAndApply: mockPullAndApply,
+}));
+
+// Mock sync-engine module for pull-gate tests
+vi.mock("./sync-engine", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./sync-engine")>();
+  return {
+    ...actual,
+    replayOutbox: mockReplayOutbox,
+  };
+});
+
+// ---------------------------------------------------------------------------
 // Mock Electron's ipcMain so IPC handler registration works in vitest
 // ---------------------------------------------------------------------------
 
@@ -27,6 +49,16 @@ import {
   createBackendPushFn,
 } from "./sync-ipc";
 import type { OutboxEntryRow } from "./sync-engine";
+
+// Helper to extract a typed handler from the mocked IPC
+function getHandler(channel: string): (...args: unknown[]) => Promise<unknown> {
+  const mockIpc = ipcMain as unknown as {
+    _handlers: Map<string, (...args: unknown[]) => unknown>;
+  };
+  const handler = mockIpc._handlers.get(channel);
+  if (!handler) throw new Error(`Handler not found for channel: ${channel}`);
+  return handler as (...args: unknown[]) => Promise<unknown>;
+}
 
 describe("sync-ipc", () => {
   beforeEach(() => {
@@ -85,13 +117,9 @@ describe("sync-ipc", () => {
 
       registerSyncIpc(getDb);
 
-      const mockIpc = ipcMain as unknown as {
-        _handlers: Map<string, (...args: unknown[]) => unknown>;
-      };
-      const handler = mockIpc._handlers.get(SYNC_CHANNELS.GET_SYNC_STATE);
-      expect(handler).toBeDefined();
+      const handler = getHandler(SYNC_CHANNELS.GET_SYNC_STATE);
 
-      const result = handler!();
+      const result = handler();
 
       expect(result).toBeDefined();
       expect(result).toHaveProperty("pendingCount");
@@ -113,13 +141,8 @@ describe("sync-ipc", () => {
 
       registerSyncIpc(getDb);
 
-      const mockIpc = ipcMain as unknown as {
-        _handlers: Map<string, (...args: unknown[]) => unknown>;
-      };
-      const handler = mockIpc._handlers.get(SYNC_CHANNELS.START_SYNC);
-      expect(handler).toBeDefined();
-
-      const result = await handler!();
+      const handler = getHandler(SYNC_CHANNELS.START_SYNC);
+      const result = (await handler()) as Record<string, unknown>;
 
       expect(result).toBeDefined();
       expect(result).toHaveProperty("synced");
@@ -135,19 +158,87 @@ describe("sync-ipc", () => {
 
       registerSyncIpc(getDb);
 
-      const mockIpc = ipcMain as unknown as {
-        _handlers: Map<string, (...args: unknown[]) => unknown>;
-      };
-      const handler = mockIpc._handlers.get(SYNC_CHANNELS.START_SYNC);
-      expect(handler).toBeDefined();
-
-      const result = await handler!(
+      const handler = getHandler(SYNC_CHANNELS.START_SYNC);
+      const result = (await handler(
         {},
         { apiBaseUrl: "http://localhost:3000/api/v1", token: "test-token" },
-      );
+      )) as Record<string, unknown>;
 
       expect(result).toBeDefined();
       expect(result).toHaveProperty("synced");
+    });
+
+    // GAP 5: pull gate — verify pullAndApply is NOT called when replay is blocked
+    it("does NOT call pullAndApply when replayOutbox returns revalidationBlocked", async () => {
+      mockReplayOutbox.mockResolvedValue({
+        synced: 0,
+        failed: 0,
+        blocked: 0,
+        skipped: 0,
+        revalidationBlocked: true,
+      });
+      mockPullAndApply.mockClear();
+
+      const getDb = vi.fn().mockReturnValue({});
+      registerSyncIpc(getDb);
+
+      const handler = getHandler(SYNC_CHANNELS.START_SYNC);
+      const result = (await handler(
+        {},
+        { apiBaseUrl: "http://localhost:3000/api/v1", token: "test-token" },
+      )) as { revalidationBlocked: boolean };
+
+      expect(result.revalidationBlocked).toBe(true);
+      // pullAndApply must NOT have been called
+      expect(mockPullAndApply).not.toHaveBeenCalled();
+    });
+
+    it("does NOT call pullAndApply when replayOutbox has blocked entries", async () => {
+      mockReplayOutbox.mockResolvedValue({
+        synced: 3,
+        failed: 1,
+        blocked: 2,
+        skipped: 0,
+        revalidationBlocked: false,
+      });
+      mockPullAndApply.mockClear();
+
+      const getDb = vi.fn().mockReturnValue({});
+      registerSyncIpc(getDb);
+
+      const handler = getHandler(SYNC_CHANNELS.START_SYNC);
+      const result = (await handler(
+        {},
+        { apiBaseUrl: "http://localhost:3000/api/v1", token: "test-token" },
+      )) as { blocked: number };
+
+      expect(result.blocked).toBe(2);
+      // pullAndApply must NOT have been called when blocked > 0
+      expect(mockPullAndApply).not.toHaveBeenCalled();
+    });
+
+    it("calls pullAndApply when replayOutbox is clean (no blocks, no revalidationBlocked)", async () => {
+      mockReplayOutbox.mockResolvedValue({
+        synced: 5,
+        failed: 0,
+        blocked: 0,
+        skipped: 0,
+        revalidationBlocked: false,
+      });
+      mockPullAndApply.mockClear();
+
+      const getDb = vi.fn().mockReturnValue({});
+      registerSyncIpc(getDb);
+
+      const handler = getHandler(SYNC_CHANNELS.START_SYNC);
+      const result = (await handler(
+        {},
+        { apiBaseUrl: "http://localhost:3000/api/v1", token: "test-token" },
+      )) as { synced: number };
+
+      expect(result.synced).toBe(5);
+      // pullAndApply SHOULD have been called when push is clean
+      expect(mockPullAndApply).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -159,13 +250,8 @@ describe("sync-ipc", () => {
 
       registerSyncIpc(getDb);
 
-      const mockIpc = ipcMain as unknown as {
-        _handlers: Map<string, (...args: unknown[]) => unknown>;
-      };
-      const handler = mockIpc._handlers.get(SYNC_CHANNELS.PULL);
-      expect(handler).toBeDefined();
-
-      const result = await handler!();
+      const handler = getHandler(SYNC_CHANNELS.PULL);
+      const result = (await handler()) as Record<string, unknown>;
 
       expect(result).toBeDefined();
       expect(result).toHaveProperty("applied");
@@ -179,13 +265,8 @@ describe("sync-ipc", () => {
 
       registerSyncIpc(getDb);
 
-      const mockIpc = ipcMain as unknown as {
-        _handlers: Map<string, (...args: unknown[]) => unknown>;
-      };
-      const handler = mockIpc._handlers.get(SYNC_CHANNELS.PULL);
-      expect(handler).toBeDefined();
-
-      const result = await handler!({}, undefined);
+      const handler = getHandler(SYNC_CHANNELS.PULL);
+      const result = (await handler({}, undefined)) as Record<string, unknown>;
 
       expect(result).toEqual({
         applied: 0,
@@ -219,8 +300,11 @@ describe("sync-ipc", () => {
         created_at: "2026-07-20T10:00:00.000Z",
         updated_at: "2026-07-20T10:00:00.000Z",
         synced_at: null,
+        local_device_timestamp: overrides.local_device_timestamp ?? null,
+        manual_fix_reason: overrides.manual_fix_reason ?? null,
+        entity_label: overrides.entity_label ?? null,
         ...overrides,
-      };
+      } as OutboxEntryRow;
     }
 
     it("serializes id and created_at into /sync/push request entries", async () => {

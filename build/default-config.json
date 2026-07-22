@@ -3,5 +3,13 @@
   "frontendDevUrl": "http://localhost:3000",
   "updates": {
     "enabled": false
+  },
+  "offline": {
+    "enabled": true,
+    "integrityCheckOnStartup": true,
+    "defaultAdmin": {
+      "username": "admin",
+      "password": "admin123"
+    }
   }
 }

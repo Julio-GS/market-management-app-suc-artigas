@@ -2,11 +2,22 @@
 // Offline state types — shared contract between main process, IPC, and preload
 // ---------------------------------------------------------------------------
 
-export type ConnectivityState = "online" | "offline" | "unknown";
+export type ConnectivityState = "online" | "offline" | "unknown" | "reconnecting";
 
 export type BootstrapStatus = "pending" | "in_progress" | "complete" | "failed";
 
 export type SyncStatus = "idle" | "syncing" | "error";
+
+export interface StatusCounts {
+  pending: number;
+  in_flight: number;
+  failed: number;
+  retry_wait: number;
+  blocked_auth: number;
+  blocked_conflict: number;
+  manual_fix: number;
+  synced: number;
+}
 
 export interface OfflineState {
   /** Whether the local store is bootstrapped and ready for offline operation. */
@@ -32,11 +43,25 @@ export interface OfflineState {
 
   /** ISO-8601 timestamp of last successful sync, or null if never synced. */
   lastSyncAt: string | null;
+
+  /** Counts by outbox status for richer UI sync-state display. */
+  statusCounts: StatusCounts;
 }
 
 // ---------------------------------------------------------------------------
 // Initial state factory — used before bootstrap or when DB is unavailable
 // ---------------------------------------------------------------------------
+
+const EMPTY_STATUS_COUNTS: StatusCounts = {
+  pending: 0,
+  in_flight: 0,
+  failed: 0,
+  retry_wait: 0,
+  blocked_auth: 0,
+  blocked_conflict: 0,
+  manual_fix: 0,
+  synced: 0,
+};
 
 export const INITIAL_OFFLINE_STATE: OfflineState = {
   ready: false,
@@ -47,6 +72,7 @@ export const INITIAL_OFFLINE_STATE: OfflineState = {
   failureCount: 0,
   degraded: false,
   lastSyncAt: null,
+  statusCounts: { ...EMPTY_STATUS_COUNTS },
 };
 
 // ---------------------------------------------------------------------------
@@ -57,10 +83,15 @@ import type Database from "better-sqlite3";
 
 /**
  * Read the current offline state from the metadata table.
- * Returns a default pre-bootstrap state if the metadata table is missing
- * (which means migrations haven't run yet).
+ *
+ * The optional `connectivity` parameter allows the connectivity monitor to
+ * inject the current network state. When omitted, connectivity defaults to
+ * `"unknown"`.
  */
-export function getOfflineState(db: Database.Database): OfflineState {
+export function getOfflineState(
+  db: Database.Database,
+  connectivity?: ConnectivityState,
+): OfflineState {
   const tableExists = db
     .prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'",
@@ -68,7 +99,7 @@ export function getOfflineState(db: Database.Database): OfflineState {
     .get();
 
   if (!tableExists) {
-    return { ...INITIAL_OFFLINE_STATE };
+    return { ...INITIAL_OFFLINE_STATE, connectivity: connectivity ?? "unknown" };
   }
 
   const rows = db
@@ -81,7 +112,7 @@ export function getOfflineState(db: Database.Database): OfflineState {
   const lastSyncAt = map.get("last_sync_at") || null;
   const degraded = map.get("degraded") === "1";
 
-  // Count outbox entries for pending/failure counts
+  // Count outbox entries for pending/failure/status counts
   const outboxTableExists = db
     .prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='outbox'",
@@ -90,29 +121,44 @@ export function getOfflineState(db: Database.Database): OfflineState {
 
   let pendingCount = 0;
   let failureCount = 0;
+  let statusCounts: StatusCounts = { ...EMPTY_STATUS_COUNTS };
 
   if (outboxTableExists) {
-    const counts = db
-      .prepare(
-        `SELECT
-           COALESCE(SUM(CASE WHEN status IN ('pending','in_flight','retry_wait','blocked_auth','blocked_conflict') THEN 1 ELSE 0 END), 0) AS pending,
-           COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
-         FROM outbox`,
-      )
-      .get() as { pending: number; failed: number };
+    const statusRows = db
+      .prepare("SELECT status, COUNT(*) as cnt FROM outbox GROUP BY status")
+      .all() as { status: string; cnt: number }[];
 
-    pendingCount = counts.pending;
-    failureCount = counts.failed;
+    const byStatus = new Map(statusRows.map((r) => [r.status, r.cnt]));
+
+    statusCounts = {
+      pending: byStatus.get("pending") ?? 0,
+      in_flight: byStatus.get("in_flight") ?? 0,
+      failed: byStatus.get("failed") ?? 0,
+      retry_wait: byStatus.get("retry_wait") ?? 0,
+      blocked_auth: byStatus.get("blocked_auth") ?? 0,
+      blocked_conflict: byStatus.get("blocked_conflict") ?? 0,
+      manual_fix: byStatus.get("manual_fix") ?? 0,
+      synced: byStatus.get("synced") ?? 0,
+    };
+
+    pendingCount =
+      statusCounts.pending +
+      statusCounts.in_flight +
+      statusCounts.retry_wait +
+      statusCounts.blocked_auth +
+      statusCounts.blocked_conflict;
+    failureCount = statusCounts.failed;
   }
 
   return {
     ready: bootstrap === "complete" && !degraded,
     bootstrap: bootstrap as BootstrapStatus,
-    connectivity: "unknown", // set externally by connectivity monitor
-    sync: "idle", // set externally by sync engine
+    connectivity: connectivity ?? "unknown",
+    sync: "idle",
     pendingCount,
     failureCount,
     degraded,
     lastSyncAt,
+    statusCounts,
   };
 }

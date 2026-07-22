@@ -207,6 +207,24 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
       CREATE INDEX IF NOT EXISTS idx_sale_payments_sale ON sale_payments(sale_id);
     `,
   },
+  {
+    version: 4,
+    sql: `
+      ALTER TABLE outbox ADD COLUMN local_device_timestamp TEXT;
+      ALTER TABLE outbox ADD COLUMN manual_fix_reason TEXT;
+      ALTER TABLE outbox ADD COLUMN entity_label TEXT;
+      CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON outbox(status, created_at);
+    `,
+  },
+  {
+    version: 5,
+    sql: `
+      -- Add password_hash to offline_sessions for fully-offline auth.
+      -- Using NULL default so existing rows remain valid; the column is
+      -- populated on the next successful login (online or offline seed).
+      ALTER TABLE offline_sessions ADD COLUMN password_hash TEXT;
+    `,
+  },
 ];
 
 /**

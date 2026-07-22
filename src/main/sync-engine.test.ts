@@ -12,6 +12,7 @@ import {
 import {
   replayOutbox,
   markOutboxEntry,
+  recoverStaleInFlightEntries,
   markRevalidateRequired,
   clearRevalidateRequired,
   isRevalidationRequired,
@@ -56,6 +57,9 @@ function insertOutboxEntry(
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     synced_at: null,
+        local_device_timestamp: overrides.local_device_timestamp ?? null,
+        manual_fix_reason: overrides.manual_fix_reason ?? null,
+        entity_label: overrides.entity_label ?? null,
     ...overrides,
   };
 
@@ -63,11 +67,11 @@ function insertOutboxEntry(
     INSERT INTO outbox
       (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
        payload, status, base_server_version, actor_user_id, attempt_count,
-       next_retry_at, last_error, server_result, created_at, updated_at, synced_at)
+       next_retry_at, last_error, server_result, created_at, updated_at, synced_at, local_device_timestamp, manual_fix_reason, entity_label)
     VALUES
       (@id, @idempotency_key, @operation_type, @aggregate_type, @aggregate_id,
        @payload, @status, @base_server_version, @actor_user_id, @attempt_count,
-       @next_retry_at, @last_error, @server_result, @created_at, @updated_at, @synced_at)
+       @next_retry_at, @last_error, @server_result, @created_at, @updated_at, @synced_at, @local_device_timestamp, @manual_fix_reason, @entity_label)
   `).run(entry);
 
   return entry;
@@ -242,10 +246,10 @@ describe("sync-engine", () => {
         .get() as { c: number };
       expect(syncedCount.c).toBe(6);
 
-      const failedCount = db
-        .prepare("SELECT COUNT(*) as c FROM outbox WHERE status = 'failed'")
+      const manualFixCount = db
+        .prepare("SELECT COUNT(*) as c FROM outbox WHERE status = 'manual_fix'")
         .get() as { c: number };
-      expect(failedCount.c).toBe(1);
+      expect(manualFixCount.c).toBe(1);
 
       const pendingCount = db
         .prepare("SELECT COUNT(*) as c FROM outbox WHERE status = 'pending'")
@@ -356,6 +360,45 @@ describe("sync-engine", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Stale in_flight recovery
+  // -----------------------------------------------------------------------
+
+  describe("recoverStaleInFlightEntries", () => {
+    it("resets in_flight entries to pending on restart", () => {
+      insertOutboxEntry(db, { id: "out-flight-1", status: "in_flight" });
+      insertOutboxEntry(db, { id: "out-flight-2", status: "in_flight" });
+      insertOutboxEntry(db, { id: "out-ok", status: "pending" });
+      insertOutboxEntry(db, { id: "out-done", status: "synced" });
+
+      const recovered = recoverStaleInFlightEntries(db);
+      expect(recovered).toBe(2);
+
+      // Verify only in_flight entries were reset
+      const entries = db
+        .prepare("SELECT id, status FROM outbox")
+        .all() as { id: string; status: string }[];
+
+      const f1 = entries.find((e) => e.id === "out-flight-1");
+      const f2 = entries.find((e) => e.id === "out-flight-2");
+      const ok = entries.find((e) => e.id === "out-ok");
+      const done = entries.find((e) => e.id === "out-done");
+
+      expect(f1!.status).toBe("pending");
+      expect(f2!.status).toBe("pending");
+      expect(ok!.status).toBe("pending"); // unchanged
+      expect(done!.status).toBe("synced"); // unchanged
+    });
+
+    it("returns 0 when there are no in_flight entries", () => {
+      insertOutboxEntry(db, { id: "out-1", status: "pending" });
+      insertOutboxEntry(db, { id: "out-2", status: "synced" });
+
+      const recovered = recoverStaleInFlightEntries(db);
+      expect(recovered).toBe(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Skip already-processed entries
   // -----------------------------------------------------------------------
 
@@ -384,6 +427,454 @@ describe("sync-engine", () => {
       const callArgs = (pushFn as ReturnType<typeof vi.fn>).mock.calls[0][0] as { id: string }[];
       expect(callArgs).toHaveLength(1);
       expect(callArgs[0].id).toBe("out-2");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Promotion conflict resolution (LWW / apply / restore)
+  // -----------------------------------------------------------------------
+
+  describe("promotion conflict resolution", () => {
+    it("local wins: re-queues promotion_update with LWW metadata", async () => {
+      const localTs = "2026-07-20T12:00:00.000Z";
+      const serverTs = "2026-07-20T10:00:00.000Z"; // older
+
+      // Seed a promotion row locally so conflict payload exists
+      db.prepare(`
+        INSERT INTO promotions (id, name, type, scope, discount_percent, created_at, updated_at)
+        VALUES ('promo-1', 'Summer Sale', 'percentage', 'product', 15, '2026-07-01', '2026-07-01')
+      `).run();
+
+      insertOutboxEntry(db, {
+        id: "out-promo",
+        idempotency_key: "inst-1:out-promo",
+        operation_type: "promotion_update",
+        aggregate_type: "promotion",
+        aggregate_id: "promo-1",
+        payload: JSON.stringify({ id: "promo-1", name: "Updated Sale", discount_percent: 25 }),
+        status: "pending",
+        local_device_timestamp: localTs,
+      });
+
+      const pushFn: SyncPushFn = vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: "out-promo",
+            idempotency_key: "inst-1:out-promo",
+            status: "conflict",
+            reason: "Version conflict",
+            server_version: serverTs,
+          },
+        ],
+      });
+
+      const revalidateFn: RevalidateFn = vi.fn().mockResolvedValue({
+        valid: true,
+        user_id: "user-1",
+      });
+
+      const result = await replayOutbox(db, pushFn, revalidateFn);
+
+      // Local wins → counted as failed for current cycle, re-queued pending
+      expect(result.failed).toBe(1);
+      expect(result.synced).toBe(0);
+
+      const updated = db
+        .prepare("SELECT * FROM outbox WHERE id = 'out-promo'")
+        .get() as OutboxEntryRow;
+      expect(updated.status).toBe("pending");
+
+      const updatedPayload = JSON.parse(updated.payload);
+      expect(updatedPayload.lww_resolution).toBe("local_wins");
+    });
+
+    it("server wins: applies server promotion payload locally and marks synced", async () => {
+      const localTs = "2026-07-20T10:00:00.000Z";
+      const serverTs = "2026-07-20T12:00:00.000Z"; // newer
+
+      db.prepare(`
+        INSERT INTO promotions (id, name, type, scope, discount_percent, created_at, updated_at)
+        VALUES ('promo-2', 'Old Name', 'percentage', 'product', 10, '2026-07-01', '2026-07-01')
+      `).run();
+
+      insertOutboxEntry(db, {
+        id: "out-promo-2",
+        idempotency_key: "inst-1:out-promo-2",
+        operation_type: "promotion_update",
+        aggregate_type: "promotion",
+        aggregate_id: "promo-2",
+        payload: JSON.stringify({ id: "promo-2", name: "My Update", discount_percent: 30 }),
+        status: "pending",
+        local_device_timestamp: localTs,
+      });
+
+      const pushFn: SyncPushFn = vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: "out-promo-2",
+            idempotency_key: "inst-1:out-promo-2",
+            status: "conflict",
+            reason: "Version conflict",
+            server_version: serverTs,
+            server_payload: { id: "promo-2", name: "Server Name", discount_percent: 20 },
+          },
+        ],
+      });
+
+      const revalidateFn: RevalidateFn = vi.fn().mockResolvedValue({
+        valid: true,
+        user_id: "user-1",
+      });
+
+      const result = await replayOutbox(db, pushFn, revalidateFn);
+
+      expect(result.synced).toBe(1);
+
+      // Outbox entry marked synced with LWW metadata
+      const updated = db
+        .prepare("SELECT * FROM outbox WHERE id = 'out-promo-2'")
+        .get() as OutboxEntryRow;
+      expect(updated.status).toBe("synced");
+
+      const serverResult = JSON.parse(updated.server_result!);
+      expect(serverResult.lww_resolution).toBe("server_wins");
+
+      // Local product row updated with server data
+      const promoRow = db
+        .prepare("SELECT * FROM promotions WHERE id = 'promo-2'")
+        .get() as { name: string; discount_percent: number };
+      expect(promoRow.name).toBe("Server Name");
+      expect(promoRow.discount_percent).toBe(20);
+    });
+
+    it("missing metadata: marks blocked_conflict", async () => {
+      insertOutboxEntry(db, {
+        id: "out-promo-3",
+        idempotency_key: "inst-1:out-promo-3",
+        operation_type: "promotion_update",
+        aggregate_type: "promotion",
+        aggregate_id: "promo-3",
+        payload: JSON.stringify({ id: "promo-3" }),
+        status: "pending",
+        local_device_timestamp: null, // missing!
+      });
+
+      const pushFn: SyncPushFn = vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: "out-promo-3",
+            idempotency_key: "inst-1:out-promo-3",
+            status: "conflict",
+            reason: "No timestamp",
+            server_version: null, // also missing
+          },
+        ],
+      });
+
+      const revalidateFn: RevalidateFn = vi.fn().mockResolvedValue({
+        valid: true,
+        user_id: "user-1",
+      });
+
+      const result = await replayOutbox(db, pushFn, revalidateFn);
+
+      expect(result.blocked).toBe(1);
+
+      const updated = db
+        .prepare("SELECT * FROM outbox WHERE id = 'out-promo-3'")
+        .get() as OutboxEntryRow;
+      expect(updated.status).toBe("blocked_conflict");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Promotion delete validation_error → restore from before snapshot
+  // -----------------------------------------------------------------------
+
+  describe("promotion delete restore", () => {
+    it("restores promotion from before snapshot on definitive rejection", async () => {
+      // Seed the promotion that will be "deleted"
+      db.prepare(`
+        INSERT INTO promotions (id, name, type, scope, discount_percent, created_at, updated_at)
+        VALUES ('promo-del', 'To Delete', 'percentage', 'product', 10, '2026-07-01', '2026-07-01')
+      `).run();
+
+      const beforeSnapshot = {
+        id: "promo-del",
+        name: "To Delete",
+        description: null,
+        scope: "product",
+        productId: null,
+        type: "percentage",
+        discountPercent: 10,
+        startDate: null,
+        endDate: null,
+        weekdays: null,
+        enabled: true,
+        createdAt: "2026-07-01",
+        updatedAt: "2026-07-01",
+      };
+
+      insertOutboxEntry(db, {
+        id: "out-del-promo",
+        idempotency_key: "inst-1:out-del-promo",
+        operation_type: "promotion_delete",
+        aggregate_type: "promotion",
+        aggregate_id: "promo-del",
+        payload: JSON.stringify({ id: "promo-del", before: beforeSnapshot }),
+        status: "pending",
+      });
+
+      // Delete the local row first (simulating what deleteOfflinePromotion does)
+      db.prepare("DELETE FROM promotions WHERE id = 'promo-del'").run();
+
+      const pushFn: SyncPushFn = vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: "out-del-promo",
+            idempotency_key: "inst-1:out-del-promo",
+            status: "validation_error",
+            reason: "Server rejected delete — promotion already in use",
+          },
+        ],
+      });
+
+      const revalidateFn: RevalidateFn = vi.fn().mockResolvedValue({
+        valid: true,
+        user_id: "user-1",
+      });
+
+      const result = await replayOutbox(db, pushFn, revalidateFn);
+
+      expect(result.failed).toBe(1);
+
+      // Outbox entry marked manual_fix
+      const updated = db
+        .prepare("SELECT * FROM outbox WHERE id = 'out-del-promo'")
+        .get() as OutboxEntryRow;
+      expect(updated.status).toBe("manual_fix");
+
+      // Product restored from before snapshot
+      const restored = db
+        .prepare("SELECT * FROM promotions WHERE id = 'promo-del'")
+        .get() as { name: string } | undefined;
+      expect(restored).toBeDefined();
+      expect(restored!.name).toBe("To Delete");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Provider purchase conflict resolution
+  // -----------------------------------------------------------------------
+
+  describe("provider purchase conflict resolution", () => {
+    it("local wins: re-queues with LWW metadata", async () => {
+      const localTs = "2026-07-20T15:00:00.000Z";
+      const serverTs = "2026-07-20T10:00:00.000Z";
+
+      db.prepare(`
+        INSERT INTO provider_purchases (id, provider_name, amount, created_at, updated_at)
+        VALUES ('pp-1', 'ACME', '1000.00', '2026-07-01', '2026-07-01')
+      `).run();
+
+      insertOutboxEntry(db, {
+        id: "out-pp",
+        idempotency_key: "inst-1:out-pp",
+        operation_type: "provider_purchase_update",
+        aggregate_type: "provider_purchase",
+        aggregate_id: "pp-1",
+        payload: JSON.stringify({ id: "pp-1", provider_name: "Updated", amount: "2000.00" }),
+        status: "pending",
+        local_device_timestamp: localTs,
+      });
+
+      const pushFn: SyncPushFn = vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: "out-pp",
+            idempotency_key: "inst-1:out-pp",
+            status: "conflict",
+            reason: "Version conflict",
+            server_version: serverTs,
+          },
+        ],
+      });
+
+      const revalidateFn: RevalidateFn = vi.fn().mockResolvedValue({
+        valid: true,
+        user_id: "user-1",
+      });
+
+      const result = await replayOutbox(db, pushFn, revalidateFn);
+
+      expect(result.failed).toBe(1);
+
+      const updated = db
+        .prepare("SELECT * FROM outbox WHERE id = 'out-pp'")
+        .get() as OutboxEntryRow;
+      expect(updated.status).toBe("pending");
+      expect(JSON.parse(updated.payload).lww_resolution).toBe("local_wins");
+    });
+
+    it("server wins: applies server payload locally and marks synced", async () => {
+      const localTs = "2026-07-20T10:00:00.000Z";
+      const serverTs = "2026-07-20T15:00:00.000Z";
+
+      db.prepare(`
+        INSERT INTO provider_purchases (id, provider_name, amount, created_at, updated_at)
+        VALUES ('pp-2', 'Old Name', '500.00', '2026-07-01', '2026-07-01')
+      `).run();
+
+      insertOutboxEntry(db, {
+        id: "out-pp-2",
+        idempotency_key: "inst-1:out-pp-2",
+        operation_type: "provider_purchase_update",
+        aggregate_type: "provider_purchase",
+        aggregate_id: "pp-2",
+        payload: JSON.stringify({ id: "pp-2", provider_name: "My Update" }),
+        status: "pending",
+        local_device_timestamp: localTs,
+      });
+
+      const pushFn: SyncPushFn = vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: "out-pp-2",
+            idempotency_key: "inst-1:out-pp-2",
+            status: "conflict",
+            reason: "Version conflict",
+            server_version: serverTs,
+            server_payload: { id: "pp-2", provider_name: "Server Name", amount: "1500.00", payment_method: "card" },
+          },
+        ],
+      });
+
+      const revalidateFn: RevalidateFn = vi.fn().mockResolvedValue({
+        valid: true,
+        user_id: "user-1",
+      });
+
+      const result = await replayOutbox(db, pushFn, revalidateFn);
+
+      expect(result.synced).toBe(1);
+
+      const updated = db
+        .prepare("SELECT * FROM outbox WHERE id = 'out-pp-2'")
+        .get() as OutboxEntryRow;
+      expect(updated.status).toBe("synced");
+      expect(JSON.parse(updated.server_result!).lww_resolution).toBe("server_wins");
+
+      const ppRow = db
+        .prepare("SELECT * FROM provider_purchases WHERE id = 'pp-2'")
+        .get() as { provider_name: string; amount: string; payment_method: string | null };
+      expect(ppRow.provider_name).toBe("Server Name");
+      expect(ppRow.amount).toBe("1500.00");
+      expect(ppRow.payment_method).toBe("card");
+    });
+
+    it("missing metadata: marks blocked_conflict", async () => {
+      insertOutboxEntry(db, {
+        id: "out-pp-3",
+        idempotency_key: "inst-1:out-pp-3",
+        operation_type: "provider_purchase_update",
+        aggregate_type: "provider_purchase",
+        aggregate_id: "pp-3",
+        payload: JSON.stringify({ id: "pp-3" }),
+        status: "pending",
+        local_device_timestamp: null,
+      });
+
+      const pushFn: SyncPushFn = vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: "out-pp-3",
+            idempotency_key: "inst-1:out-pp-3",
+            status: "conflict",
+            reason: "Missing metadata",
+            server_version: null,
+          },
+        ],
+      });
+
+      const revalidateFn: RevalidateFn = vi.fn().mockResolvedValue({
+        valid: true,
+        user_id: "user-1",
+      });
+
+      const result = await replayOutbox(db, pushFn, revalidateFn);
+
+      expect(result.blocked).toBe(1);
+
+      const updated = db
+        .prepare("SELECT * FROM outbox WHERE id = 'out-pp-3'")
+        .get() as OutboxEntryRow;
+      expect(updated.status).toBe("blocked_conflict");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Provider purchase delete restore
+  // -----------------------------------------------------------------------
+
+  describe("provider purchase delete restore", () => {
+    it("restores purchase from before snapshot on definitive rejection", async () => {
+      db.prepare(`
+        INSERT INTO provider_purchases (id, provider_name, amount, payment_method, created_at, updated_at)
+        VALUES ('pp-del', 'DeleteMe', '5000.00', 'transfer', '2026-07-01', '2026-07-01')
+      `).run();
+
+      const beforeSnapshot = {
+        id: "pp-del",
+        providerName: "DeleteMe",
+        amount: "5000.00",
+        paymentMethod: "transfer",
+        createdAt: "2026-07-01",
+        updatedAt: "2026-07-01",
+      };
+
+      insertOutboxEntry(db, {
+        id: "out-del-pp",
+        idempotency_key: "inst-1:out-del-pp",
+        operation_type: "provider_purchase_delete",
+        aggregate_type: "provider_purchase",
+        aggregate_id: "pp-del",
+        payload: JSON.stringify({ id: "pp-del", before: beforeSnapshot }),
+        status: "pending",
+      });
+
+      db.prepare("DELETE FROM provider_purchases WHERE id = 'pp-del'").run();
+
+      const pushFn: SyncPushFn = vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: "out-del-pp",
+            idempotency_key: "inst-1:out-del-pp",
+            status: "validation_error",
+            reason: "Server rejected delete",
+          },
+        ],
+      });
+
+      const revalidateFn: RevalidateFn = vi.fn().mockResolvedValue({
+        valid: true,
+        user_id: "user-1",
+      });
+
+      const result = await replayOutbox(db, pushFn, revalidateFn);
+
+      expect(result.failed).toBe(1);
+
+      const updated = db
+        .prepare("SELECT * FROM outbox WHERE id = 'out-del-pp'")
+        .get() as OutboxEntryRow;
+      expect(updated.status).toBe("manual_fix");
+
+      const restored = db
+        .prepare("SELECT * FROM provider_purchases WHERE id = 'pp-del'")
+        .get() as { provider_name: string; amount: string } | undefined;
+      expect(restored).toBeDefined();
+      expect(restored!.provider_name).toBe("DeleteMe");
+      expect(restored!.amount).toBe("5000.00");
     });
   });
 });

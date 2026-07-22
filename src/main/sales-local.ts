@@ -1,5 +1,15 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import {
+  getOfflineSession,
+  assertOfflineEligible,
+  getActorUserId,
+  markOfflineWorkRequiresRevalidation,
+  OfflineAuthRequiredError,
+} from "./offline-auth";
+
+// Re-export for IPC error mapping
+export { OfflineAuthRequiredError };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,18 +89,28 @@ function now(): string {
 /**
  * Complete a non-fiscal sale locally within a single SQLite transaction.
  *
+ * - Validates that an offline session exists (auth guard).
  * - Validates that invoiceRequested is false (fiscal blocking).
  * - Inserts the sale, items, and payments.
  * - Deducts stock for products that track stock (maneja_stock).
  * - Records stock movements (negative is allowed with warning).
- * - Creates a durable outbox entry in the same transaction.
+ * - Creates a durable `sale_create` outbox entry followed by one
+ *   `stock_adjust` outbox entry per stock movement, all in the same
+ *   transaction.
+ * - Marks revalidation-required after the write.
  *
  * Throws `FiscalBlockedError` when `invoiceRequested` is true.
+ * Throws `OfflineAuthRequiredError` when no cached session exists.
  */
 export function completeOfflineSale(
   db: Database.Database,
   input: OfflineSaleInput,
 ): OfflineSaleResult {
+  // -----------------------------------------------------------------------
+  // Offline auth guard
+  // -----------------------------------------------------------------------
+  assertOfflineEligible(db);
+
   // -----------------------------------------------------------------------
   // Fiscal sale blocking gate
   // -----------------------------------------------------------------------
@@ -101,6 +121,7 @@ export function completeOfflineSale(
   const saleId = randomUUID();
   const createdAt = now();
   const installationId = getInstallationId(db);
+  const actorUserId = getActorUserId(db);
 
   const warnings: string[] = [];
   const stockMovements: StockMovementResult[] = [];
@@ -169,6 +190,8 @@ export function completeOfflineSale(
     // -------------------------------------------------------------------
     // 4. Stock deduction + movement recording
     // -------------------------------------------------------------------
+    const stockMovementIds: string[] = [];
+
     for (const item of input.items) {
       // Check if product tracks stock
       const product = db
@@ -212,6 +235,8 @@ export function completeOfflineSale(
         created_at: createdAt,
       });
 
+      stockMovementIds.push(movementId);
+
       stockMovements.push({
         productId: item.productId,
         quantity: -item.quantity,
@@ -228,12 +253,26 @@ export function completeOfflineSale(
     }
 
     // -------------------------------------------------------------------
-    // 5. Outbox entry (durable, in the same transaction)
+    // 5. Outbox entries (durable, in the same transaction)
+    //    a) sale_create first
+    //    b) stock_adjust per stock movement
     // -------------------------------------------------------------------
+
+    const insertOutbox = db.prepare(`
+      INSERT INTO outbox
+        (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
+         payload, status, attempt_count, created_at, updated_at,
+         local_device_timestamp, actor_user_id, entity_label)
+      VALUES
+        (@id, @idempotency_key, @operation_type, @aggregate_type, @aggregate_id,
+         @payload, 'pending', 0, @created_at, @created_at,
+         @local_device_timestamp, @actor_user_id, @entity_label)
+    `);
+
     const outboxId = randomUUID();
     const idempotencyKey = `${installationId}:${outboxId}`;
 
-    const payload = JSON.stringify({
+    const salePayload = JSON.stringify({
       saleId,
       total: input.total,
       items: input.items.map((i) => ({
@@ -249,22 +288,54 @@ export function completeOfflineSale(
       createdAt,
     });
 
-    db.prepare(`
-      INSERT INTO outbox
-        (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
-         payload, status, attempt_count, created_at, updated_at)
-      VALUES
-        (@id, @idempotency_key, @operation_type, @aggregate_type, @aggregate_id,
-         @payload, 'pending', 0, @created_at, @created_at)
-    `).run({
+    insertOutbox.run({
       id: outboxId,
       idempotency_key: idempotencyKey,
       operation_type: "sale_create",
       aggregate_type: "sale",
       aggregate_id: saleId,
-      payload,
+      payload: salePayload,
       created_at: createdAt,
+      local_device_timestamp: createdAt,
+      actor_user_id: actorUserId,
+      entity_label: `Sale ${saleId.slice(0, 8)} — ${input.total}`,
     });
+
+    // Stock adjust outbox entries — one per stock-managed product
+    for (let i = 0; i < stockMovements.length; i++) {
+      const sm = stockMovements[i];
+      const movementId = stockMovementIds[i];
+
+      const stockPayload = JSON.stringify({
+        sale_id: saleId,
+        stock_movement_id: movementId,
+        product_id: sm.productId,
+        quantity: sm.quantity,
+        reason: sm.reason,
+        local_balance_after: getLocalBalanceAfter(db, sm.productId),
+      });
+
+      const stockOutboxId = randomUUID();
+      const stockIdempotencyKey = `${installationId}:${stockOutboxId}`;
+
+      insertOutbox.run({
+        id: stockOutboxId,
+        idempotency_key: stockIdempotencyKey,
+        operation_type: "stock_adjust",
+        aggregate_type: "stock",
+        aggregate_id: sm.productId,
+        payload: stockPayload,
+        created_at: createdAt,
+        local_device_timestamp: createdAt,
+        actor_user_id: actorUserId,
+        entity_label: `Stock adjust: ${sm.productId}`,
+      });
+    }
+
+    // -------------------------------------------------------------------
+    // 6. Mark revalidation required after offline write
+    // -------------------------------------------------------------------
+    markOfflineWorkRequiresRevalidation(db);
 
     return outboxId;
   });
@@ -284,4 +355,62 @@ export function completeOfflineSale(
     warnings: warnings.length > 0 ? warnings : undefined,
     outboxId,
   };
+}
+
+/**
+ * Return the current stock_actual for a product after any recent writes
+ * within the same transaction. Used to populate `local_balance_after` in
+ * stock_adjust outbox payloads.
+ */
+function getLocalBalanceAfter(db: Database.Database, productId: string): number {
+  const row = db
+    .prepare("SELECT stock_actual FROM stock_balances WHERE product_id = ?")
+    .get(productId) as { stock_actual: number } | undefined;
+  return row?.stock_actual ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Sales listing — exposes local sale records for sync-state visibility
+// ---------------------------------------------------------------------------
+
+export interface ListedSale {
+  id: string;
+  total: string;
+  customer: string;
+  invoiceStatus: string;
+  invoiceRequested: boolean;
+  createdAt: string;
+  syncStatus?: string | null;
+}
+
+export function listOfflineSales(db: Database.Database): ListedSale[] {
+  const rows = db
+    .prepare(
+      `SELECT
+         s.id, s.total, s.customer, s.invoice_status, s.invoice_requested, s.created_at,
+         o.status AS sync_status
+       FROM sales s
+       LEFT JOIN outbox o ON o.aggregate_type = 'sale' AND o.aggregate_id = s.id
+         AND o.operation_type = 'sale_create'
+       ORDER BY s.created_at DESC`,
+    )
+    .all() as {
+      id: string;
+      total: string;
+      customer: string;
+      invoice_status: string;
+      invoice_requested: number;
+      created_at: string;
+      sync_status: string | null;
+    }[];
+
+  return rows.map((r) => ({
+    id: r.id,
+    total: r.total,
+    customer: r.customer,
+    invoiceStatus: r.invoice_status,
+    invoiceRequested: r.invoice_requested === 1,
+    createdAt: r.created_at,
+    syncStatus: r.sync_status,
+  }));
 }

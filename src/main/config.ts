@@ -13,6 +13,15 @@ export interface OfflineConfig {
   dbPath?: string;
   /** Run integrity_check on every startup. Defaults to true. */
   integrityCheckOnStartup: boolean;
+  /**
+   * Default admin credentials seeded into SQLite on first launch.
+   * Allows the app to work fully offline without any prior online login.
+   * Password is stored as a scrypt hash — never persisted in plaintext.
+   */
+  defaultAdmin?: {
+    username: string;
+    password: string;
+  };
 }
 
 export interface DesktopConfig {
@@ -35,6 +44,10 @@ interface ConfigFileShape {
   offline?: {
     enabled?: unknown;
     integrityCheckOnStartup?: unknown;
+    defaultAdmin?: {
+      username?: unknown;
+      password?: unknown;
+    };
   };
 }
 
@@ -101,6 +114,18 @@ export function resolveDesktopConfig(options: ResolveDesktopConfigOptions = {}):
     booleanValue(defaultConfig.offline?.integrityCheckOnStartup) ??
     true;
 
+  // defaultAdmin: user config takes precedence over default config
+  const defaultAdminUsername =
+    stringValue(userConfig.offline?.defaultAdmin?.username) ??
+    stringValue(defaultConfig.offline?.defaultAdmin?.username);
+  const defaultAdminPassword =
+    stringValue(userConfig.offline?.defaultAdmin?.password) ??
+    stringValue(defaultConfig.offline?.defaultAdmin?.password);
+  const defaultAdmin =
+    defaultAdminUsername && defaultAdminPassword
+      ? { username: defaultAdminUsername, password: defaultAdminPassword }
+      : undefined;
+
   return {
     apiBaseUrl,
     frontendDevUrl,
@@ -113,7 +138,8 @@ export function resolveDesktopConfig(options: ResolveDesktopConfigOptions = {}):
     },
     offline: {
       enabled: offlineEnabled,
-      integrityCheckOnStartup
+      integrityCheckOnStartup,
+      defaultAdmin,
     }
   };
 }

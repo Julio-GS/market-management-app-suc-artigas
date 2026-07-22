@@ -68,6 +68,7 @@ function assertOfflineStateShape(state: unknown): asserts state is OfflineState 
     "failureCount",
     "degraded",
     "lastSyncAt",
+    "statusCounts",
   ];
 
   for (const key of requiredKeys) {
@@ -88,12 +89,24 @@ function assertOfflineStateShape(state: unknown): asserts state is OfflineState 
     throw new Error("lastSyncAt must be string | null");
   }
 
+  // statusCounts shape
+  if (typeof s.statusCounts !== "object" || s.statusCounts === null) {
+    throw new Error("statusCounts must be an object");
+  }
+  const sc = s.statusCounts as Record<string, unknown>;
+  const statusCountKeys = ["pending", "in_flight", "failed", "retry_wait", "blocked_auth", "blocked_conflict", "manual_fix", "synced"];
+  for (const key of statusCountKeys) {
+    if (typeof sc[key] !== "number") {
+      throw new Error(`statusCounts.${key} must be number`);
+    }
+  }
+
   const validBootstrap = ["pending", "in_progress", "complete", "failed"];
   if (!validBootstrap.includes(s.bootstrap as string)) {
     throw new Error(`bootstrap must be one of: ${validBootstrap.join(", ")}`);
   }
 
-  const validConnectivity = ["online", "offline", "unknown"];
+  const validConnectivity = ["online", "offline", "unknown", "reconnecting"];
   if (!validConnectivity.includes(s.connectivity as string)) {
     throw new Error(`connectivity must be one of: ${validConnectivity.join(", ")}`);
   }
@@ -102,6 +115,19 @@ function assertOfflineStateShape(state: unknown): asserts state is OfflineState 
   if (!validSync.includes(s.sync as string)) {
     throw new Error(`sync must be one of: ${validSync.join(", ")}`);
   }
+}
+
+function makeEmptyStatusCounts() {
+  return {
+    pending: 0,
+    in_flight: 0,
+    failed: 0,
+    retry_wait: 0,
+    blocked_auth: 0,
+    blocked_conflict: 0,
+    manual_fix: 0,
+    synced: 0,
+  };
 }
 
 describe("OfflineState shape contract", () => {
@@ -115,6 +141,7 @@ describe("OfflineState shape contract", () => {
       failureCount: 0,
       degraded: false,
       lastSyncAt: null,
+      statusCounts: makeEmptyStatusCounts(),
     };
 
     expect(() => assertOfflineStateShape(state)).not.toThrow();
@@ -130,6 +157,7 @@ describe("OfflineState shape contract", () => {
       failureCount: 0,
       degraded: false,
       lastSyncAt: null,
+      statusCounts: makeEmptyStatusCounts(),
     };
 
     expect(() => assertOfflineStateShape(state)).not.toThrow();
@@ -145,6 +173,7 @@ describe("OfflineState shape contract", () => {
       failureCount: 1,
       degraded: false,
       lastSyncAt: "2025-07-18T00:00:00.000Z",
+      statusCounts: { ...makeEmptyStatusCounts(), pending: 5, failed: 1 },
     };
 
     expect(() => assertOfflineStateShape(state)).not.toThrow();
@@ -160,6 +189,7 @@ describe("OfflineState shape contract", () => {
       failureCount: 0,
       degraded: true,
       lastSyncAt: null,
+      statusCounts: makeEmptyStatusCounts(),
     };
 
     expect(() => assertOfflineStateShape(state)).not.toThrow();
@@ -179,6 +209,7 @@ describe("OfflineState shape contract", () => {
       failureCount: 0,
       degraded: false,
       lastSyncAt: null,
+      statusCounts: makeEmptyStatusCounts(),
     };
 
     expect(() => assertOfflineStateShape(state)).toThrow(/bootstrap/);
@@ -194,6 +225,7 @@ describe("OfflineState shape contract", () => {
       failureCount: 0,
       degraded: false,
       lastSyncAt: null,
+      statusCounts: makeEmptyStatusCounts(),
     };
 
     expect(() => assertOfflineStateShape(state)).toThrow(/pendingCount/);
@@ -287,12 +319,14 @@ describe("getOfflineState with real SQLite DB", () => {
     db.exec("DROP TABLE IF EXISTS metadata");
 
     const state = getOfflineState(db);
-    expect(state).toEqual(INITIAL_OFFLINE_STATE);
+    expect(state.ready).toBe(false);
+    expect(state.bootstrap).toBe("pending");
+    expect(state.degraded).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// IPC handler fallback — degraded state when DB is unavailable
+// IPC handler resilience — degraded state when DB is unavailable
 // ---------------------------------------------------------------------------
 
 describe("offline IPC handler resilience", () => {

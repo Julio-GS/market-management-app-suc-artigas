@@ -228,6 +228,16 @@ describe("validateSaleInput -- IPC boundary validation", () => {
     expect(result.valid).toBe(false);
   });
 
+  it("rejects item with whitespace-only productId", () => {
+    const result = validateSaleInput({
+      items: [{ productId: "   ", name: "X", quantity: 1, unitPrice: "1", subtotal: "1", discountAmount: "0" }],
+      payments: [{ method: "cash", amount: "1" }],
+      total: "1.00",
+      invoiceRequested: false,
+    });
+    expect(result.valid).toBe(false);
+  });
+
   it("rejects item with non-positive quantity", () => {
     const result = validateSaleInput({
       items: [{ productId: "p1", name: "X", quantity: 0, unitPrice: "1", subtotal: "1", discountAmount: "0" }],

@@ -11,14 +11,44 @@ import { getDatabasePath, openDatabase, runMigrations, closeDatabase } from "./d
 import { registerOfflineIpc, unregisterOfflineIpc } from "./offline-ipc";
 import { registerBootstrapIpc, unregisterBootstrapIpc } from "./bootstrap-ipc";
 import { registerSalesIpc, unregisterSalesIpc } from "./sales-ipc";
-import { registerSyncIpc, unregisterSyncIpc } from "./sync-ipc";
+import { registerSyncIpc, unregisterSyncIpc, createBackendPushFn } from "./sync-ipc";
 import { registerProductsIpc, unregisterProductsIpc } from "./products-ipc";
 import { registerPromotionsIpc, unregisterPromotionsIpc } from "./promotions-ipc";
 import { registerProviderPurchasesIpc, unregisterProviderPurchasesIpc } from "./provider-purchases-ipc";
 import { registerReportsIpc, unregisterReportsIpc } from "./reports-ipc";
 import { registerSupportIpc, unregisterSupportIpc } from "./support-ipc";
+import { onConnectivityChange } from "./connectivity-state";
+import { replayOutbox, recoverStaleInFlightEntries, type RevalidateFn } from "./sync-engine";
+import { seedDefaultAdmin } from "./offline-auth";
+
+/** Cached auth params supplied by the renderer for automatic sync on reconnect. */
+let _lastSyncAuth: { apiBaseUrl: string; token: string } | null = null;
+
+/** Store auth params from the renderer so reconnect-sync can re-use them. */
+function setLastSyncAuth(params: { apiBaseUrl: string; token: string }): void {
+  _lastSyncAuth = params;
+}
 
 log.initialize();
+
+// ---------------------------------------------------------------------------
+// Config path helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the path to default-config.json.
+ *
+ * - In packaged builds: reads from the Electron resources directory.
+ * - In development: reads from the project's build/ directory so local
+ *   changes to default-config.json take effect without rebuilding the package.
+ */
+function getDefaultConfigPath(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "default-config.json");
+  }
+  // __dirname is dist/main/ when compiled; go up two levels to project root.
+  return path.join(__dirname, "../../build/default-config.json");
+}
 
 // ---------------------------------------------------------------------------
 // Database lifecycle — owned by the main process
@@ -33,7 +63,11 @@ function getDb(): Database.Database {
   return db;
 }
 
-function initDatabase(userDataPath: string, integrityCheckOnStartup: boolean): void {
+function initDatabase(
+  userDataPath: string,
+  integrityCheckOnStartup: boolean,
+  defaultAdmin?: { username: string; password: string },
+): void {
   const dbPath = getDatabasePath(userDataPath);
   log.info("Opening local database", { dbPath });
 
@@ -56,6 +90,22 @@ function initDatabase(userDataPath: string, integrityCheckOnStartup: boolean): v
       log.info("Applied database migrations", { count: applied });
     } else {
       log.info("Database migrations up to date");
+    }
+
+    // Recover any entries left in_flight from a previous crash
+    const recovered = recoverStaleInFlightEntries(db);
+    if (recovered > 0) {
+      log.info("Recovered stale in_flight entries", { count: recovered });
+    }
+
+    // Seed the default admin so the app works offline from the first launch.
+    if (defaultAdmin) {
+      try {
+        seedDefaultAdmin(db, defaultAdmin.username, defaultAdmin.password);
+        log.info("Default admin seeded", { username: defaultAdmin.username });
+      } catch (err) {
+        log.warn("Failed to seed default admin", err);
+      }
     }
   } catch (err) {
     log.error("Database initialization failed", err);
@@ -80,12 +130,46 @@ function initDatabase(userDataPath: string, integrityCheckOnStartup: boolean): v
   registerOfflineIpc(getDb);
   registerBootstrapIpc(getDb);
   registerSalesIpc(getDb);
-  registerSyncIpc(getDb);
+  registerSyncIpc(getDb, setLastSyncAuth);
   registerProductsIpc(getDb);
   registerPromotionsIpc(getDb);
   registerProviderPurchasesIpc(getDb);
   registerReportsIpc(getDb);
   registerSupportIpc(getDb);
+
+  // -------------------------------------------------------------------
+  // Connectivity-change listener: trigger whole-outbox sync on reconnect
+  // -------------------------------------------------------------------
+  onConnectivityChange((next, previous) => {
+    // Trigger full outbox sync when connectivity returns (offline/reconnecting → online)
+    if (previous !== "online" && next === "online") {
+      const auth = _lastSyncAuth;
+      if (auth) {
+        log.info("Connectivity restored — triggering outbox sync");
+        try {
+          const d = getDb();
+          const pushFn = createBackendPushFn(auth.apiBaseUrl, auth.token);
+          const revalidateFn: RevalidateFn = (userId: string) =>
+            fetch(`${auth.apiBaseUrl}/auth/revalidate`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${auth.token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ user_id: userId }),
+            }).then((r) => r.json()) as ReturnType<RevalidateFn>;
+          // Fire-and-forget — don't block the connectivity monitor
+          replayOutbox(d, pushFn, revalidateFn).catch((err) =>
+            log.error("Reconnect sync failed", err),
+          );
+        } catch (err) {
+          log.warn("Reconnect sync skipped — DB not available", err);
+        }
+      } else {
+        log.info("Connectivity restored — no cached auth, sync deferred");
+      }
+    }
+  });
 }
 
 function shutdownDatabase(): void {
@@ -166,7 +250,7 @@ async function createWindow(): Promise<void> {
   const config = resolveDesktopConfig({
     appVersion: app.getVersion(),
     userConfigPath: path.join(app.getPath("userData"), "config.json"),
-    defaultConfigPath: path.join(process.resourcesPath, "default-config.json")
+    defaultConfigPath: getDefaultConfigPath()
   });
 
   const updateStatus = getUpdateStatus(config);
@@ -215,13 +299,17 @@ if (!hasSingleInstanceLock) {
     const config = resolveDesktopConfig({
       appVersion: app.getVersion(),
       userConfigPath: path.join(app.getPath("userData"), "config.json"),
-      defaultConfigPath: path.join(process.resourcesPath, "default-config.json")
+      defaultConfigPath: getDefaultConfigPath()
     });
 
     // Initialize the local SQLite database before creating the renderer window.
     // The DB is initialized even when offline mode is disabled so the metadata
     // table can record readiness and the support surface always works.
-    initDatabase(app.getPath("userData"), config.offline.integrityCheckOnStartup);
+    initDatabase(
+      app.getPath("userData"),
+      config.offline.integrityCheckOnStartup,
+      config.offline.defaultAdmin,
+    );
 
     await createWindow();
 

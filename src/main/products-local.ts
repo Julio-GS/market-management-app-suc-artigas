@@ -1,5 +1,15 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import {
+  getOfflineSession,
+  assertOfflineEligible,
+  getActorUserId,
+  markOfflineWorkRequiresRevalidation,
+  OfflineAuthRequiredError,
+} from "./offline-auth";
+
+// Re-export for IPC error mapping
+export { OfflineAuthRequiredError };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -68,6 +78,14 @@ export interface OfflineProductResult {
     updatedAt: string;
   };
   error?: string;
+  errorCode?: string;
+}
+
+export class ProtectedProductError extends Error {
+  constructor(productId: string) {
+    super(`Cannot delete protected product ${productId}. Protected products are server-managed.`);
+    this.name = "ProtectedProductError";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +101,31 @@ function getInstallationId(db: Database.Database): string {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+export function sanitizeProductCodes(codigos: readonly string[] | null | undefined): string[] {
+  if (!Array.isArray(codigos)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const sanitized: string[] = [];
+
+  for (const code of codigos) {
+    if (typeof code !== "string") {
+      continue;
+    }
+
+    const trimmed = code.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+
+    seen.add(trimmed);
+    sanitized.push(trimmed);
+  }
+
+  return sanitized;
 }
 
 function mapRow(row: OfflineProductRow): OfflineProductResult["product"] {
@@ -105,19 +148,63 @@ function mapRow(row: OfflineProductRow): OfflineProductResult["product"] {
 }
 
 // ---------------------------------------------------------------------------
+// Outbox insert helper (shared across create/update/delete)
+// ---------------------------------------------------------------------------
+
+function insertProductOutbox(
+  db: Database.Database,
+  opType: string,
+  productId: string,
+  payload: unknown,
+  createdAt: string,
+  installationId: string,
+  actorUserId: string | null,
+  entityLabel: string,
+): void {
+  const outboxId = randomUUID();
+  const idempotencyKey = `${installationId}:${outboxId}`;
+
+  db.prepare(`
+    INSERT INTO outbox
+      (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
+       payload, status, attempt_count, created_at, updated_at,
+       local_device_timestamp, actor_user_id, entity_label)
+    VALUES
+      (@id, @idempotency_key, @operation_type, 'product', @aggregate_id,
+       @payload, 'pending', 0, @created_at, @created_at,
+       @local_device_timestamp, @actor_user_id, @entity_label)
+  `).run({
+    id: outboxId,
+    idempotency_key: idempotencyKey,
+    operation_type: opType,
+    aggregate_id: productId,
+    payload: JSON.stringify(payload),
+    created_at: createdAt,
+    local_device_timestamp: createdAt,
+    actor_user_id: actorUserId,
+    entity_label: entityLabel,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------
 
 /**
  * Create a product locally and enqueue an outbox entry in the same transaction.
+ * Requires a cached offline session (auth guard).
  */
 export function createOfflineProduct(
   db: Database.Database,
   input: OfflineProductInput,
 ): OfflineProductResult {
+  assertOfflineEligible(db);
+
   const productId = randomUUID();
   const createdAt = now();
   const installationId = getInstallationId(db);
+  const actorUserId = getActorUserId(db);
+  const sanitizedCodigos = sanitizeProductCodes(input.codigos);
 
   const run = db.transaction(() => {
     db.prepare(`
@@ -140,43 +227,31 @@ export function createOfflineProduct(
       etiqueta: input.etiqueta ?? "",
       facturable: input.facturable !== false ? 1 : 0,
       maneja_stock: input.maneja_stock !== false ? 1 : 0,
-      codigos: JSON.stringify(input.codigos ?? []),
+      codigos: JSON.stringify(sanitizedCodigos),
       pricing_mode: "fixed",
       created_at: createdAt,
     });
 
-    // Outbox entry
-    const outboxId = randomUUID();
-    const idempotencyKey = `${installationId}:${outboxId}`;
+    insertProductOutbox(
+      db, "product_create", productId,
+      {
+        id: productId,
+        detalle: input.detalle,
+        costo_neto: input.costo_neto ?? null,
+        costo_final: input.costo_final ?? null,
+        iva: input.iva ?? null,
+        cambio_costo: input.cambio_costo ?? "fixed",
+        cambio_precio: input.cambio_precio ?? "fixed",
+        etiqueta: input.etiqueta ?? "",
+        facturable: input.facturable !== false,
+        maneja_stock: input.maneja_stock !== false,
+        codigos: sanitizedCodigos,
+      },
+      createdAt, installationId, actorUserId,
+      `Product create: ${input.detalle}`,
+    );
 
-    const payload = JSON.stringify({
-      id: productId,
-      detalle: input.detalle,
-      costo_neto: input.costo_neto ?? null,
-      costo_final: input.costo_final ?? null,
-      iva: input.iva ?? null,
-      cambio_costo: input.cambio_costo ?? "fixed",
-      cambio_precio: input.cambio_precio ?? "fixed",
-      etiqueta: input.etiqueta ?? "",
-      facturable: input.facturable !== false,
-      maneja_stock: input.maneja_stock !== false,
-      codigos: input.codigos ?? [],
-    });
-
-    db.prepare(`
-      INSERT INTO outbox
-        (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
-         payload, status, attempt_count, created_at, updated_at)
-      VALUES
-        (@id, @idempotency_key, 'product_create', 'product', @aggregate_id,
-         @payload, 'pending', 0, @created_at, @created_at)
-    `).run({
-      id: outboxId,
-      idempotency_key: idempotencyKey,
-      aggregate_id: productId,
-      payload,
-      created_at: createdAt,
-    });
+    markOfflineWorkRequiresRevalidation(db);
   });
 
   run();
@@ -191,14 +266,19 @@ export function createOfflineProduct(
 
 /**
  * Update a product locally and enqueue an outbox entry in the same transaction.
+ * Requires a cached offline session (auth guard).
  */
 export function updateOfflineProduct(
   db: Database.Database,
   productId: string,
   input: OfflineProductUpdateInput,
 ): OfflineProductResult {
+  assertOfflineEligible(db);
+
   const createdAt = now();
   const installationId = getInstallationId(db);
+  const actorUserId = getActorUserId(db);
+  const sanitizedCodigos = input.codigos !== undefined ? sanitizeProductCodes(input.codigos) : undefined;
 
   const existing = db.prepare("SELECT * FROM products WHERE id = ?").get(productId) as OfflineProductRow | undefined;
   if (!existing) {
@@ -231,42 +311,29 @@ export function updateOfflineProduct(
       etiqueta: input.etiqueta ?? null,
       facturable: input.facturable !== undefined ? (input.facturable ? 1 : 0) : null,
       maneja_stock: input.maneja_stock !== undefined ? (input.maneja_stock ? 1 : 0) : null,
-      codigos: input.codigos ? JSON.stringify(input.codigos) : null,
+      codigos: sanitizedCodigos !== undefined ? JSON.stringify(sanitizedCodigos) : null,
       updated_at: createdAt,
     });
 
-    // Outbox entry
-    const outboxId = randomUUID();
-    const idempotencyKey = `${installationId}:${outboxId}`;
+    const payload: Record<string, unknown> = { id: productId };
+    if (input.detalle !== undefined) payload.detalle = input.detalle;
+    if (input.costo_neto !== undefined) payload.costo_neto = input.costo_neto;
+    if (input.costo_final !== undefined) payload.costo_final = input.costo_final;
+    if (input.iva !== undefined) payload.iva = input.iva;
+    if (input.cambio_costo !== undefined) payload.cambio_costo = input.cambio_costo;
+    if (input.cambio_precio !== undefined) payload.cambio_precio = input.cambio_precio;
+    if (input.etiqueta !== undefined) payload.etiqueta = input.etiqueta;
+    if (input.facturable !== undefined) payload.facturable = input.facturable;
+    if (input.maneja_stock !== undefined) payload.maneja_stock = input.maneja_stock;
+    if (sanitizedCodigos !== undefined) payload.codigos = sanitizedCodigos;
 
-    const payload = JSON.stringify({
-      id: productId,
-      ...(input.detalle !== undefined && { detalle: input.detalle }),
-      ...(input.costo_neto !== undefined && { costo_neto: input.costo_neto }),
-      ...(input.costo_final !== undefined && { costo_final: input.costo_final }),
-      ...(input.iva !== undefined && { iva: input.iva }),
-      ...(input.cambio_costo !== undefined && { cambio_costo: input.cambio_costo }),
-      ...(input.cambio_precio !== undefined && { cambio_precio: input.cambio_precio }),
-      ...(input.etiqueta !== undefined && { etiqueta: input.etiqueta }),
-      ...(input.facturable !== undefined && { facturable: input.facturable }),
-      ...(input.maneja_stock !== undefined && { maneja_stock: input.maneja_stock }),
-      ...(input.codigos !== undefined && { codigos: input.codigos }),
-    });
+    insertProductOutbox(
+      db, "product_update", productId, payload,
+      createdAt, installationId, actorUserId,
+      `Product update: ${productId.slice(0, 8)}`,
+    );
 
-    db.prepare(`
-      INSERT INTO outbox
-        (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
-         payload, status, attempt_count, created_at, updated_at)
-      VALUES
-        (@id, @idempotency_key, 'product_update', 'product', @aggregate_id,
-         @payload, 'pending', 0, @created_at, @created_at)
-    `).run({
-      id: outboxId,
-      idempotency_key: idempotencyKey,
-      aggregate_id: productId,
-      payload,
-      created_at: createdAt,
-    });
+    markOfflineWorkRequiresRevalidation(db);
   });
 
   run();
@@ -281,39 +348,48 @@ export function updateOfflineProduct(
 
 /**
  * Delete a product locally and enqueue an outbox entry in the same transaction.
+ *
+ * - Requires a cached offline session (auth guard).
+ * - Rejects protected products (`is_protected = 1`) with `ProtectedProductError`.
+ * - Records a `before` snapshot in the outbox payload for restore on rejection.
  */
 export function deleteOfflineProduct(
   db: Database.Database,
   productId: string,
 ): OfflineProductResult {
+  assertOfflineEligible(db);
+
   const createdAt = now();
   const installationId = getInstallationId(db);
+  const actorUserId = getActorUserId(db);
 
   const existing = db.prepare("SELECT * FROM products WHERE id = ?").get(productId) as OfflineProductRow | undefined;
   if (!existing) {
     return { success: false, error: "Product not found" };
   }
 
+  // Protected delete guard
+  if (existing.is_protected === 1) {
+    return { success: false, error: "Cannot delete a protected product", errorCode: "PROTECTED_PRODUCT" };
+  }
+
+  // Snapshot for recovery on rejection
+  const beforeSnapshot = mapRow(existing)!;
+
   const run = db.transaction(() => {
     db.prepare("DELETE FROM products WHERE id = ?").run(productId);
 
-    // Outbox entry
-    const outboxId = randomUUID();
-    const idempotencyKey = `${installationId}:${outboxId}`;
+    insertProductOutbox(
+      db, "product_delete", productId,
+      {
+        id: productId,
+        before: beforeSnapshot,
+      },
+      createdAt, installationId, actorUserId,
+      `Product delete: ${beforeSnapshot.detalle}`,
+    );
 
-    db.prepare(`
-      INSERT INTO outbox
-        (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
-         payload, status, attempt_count, created_at, updated_at)
-      VALUES
-        (@id, @idempotency_key, 'product_delete', 'product', @aggregate_id,
-         '{}', 'pending', 0, @created_at, @created_at)
-    `).run({
-      id: outboxId,
-      idempotency_key: idempotencyKey,
-      aggregate_id: productId,
-      created_at: createdAt,
-    });
+    markOfflineWorkRequiresRevalidation(db);
   });
 
   run();
@@ -331,12 +407,6 @@ export function listOfflineProducts(db: Database.Database): OfflineProductResult
 
 /**
  * Search products with optional filter support.
- *
- * - When no filter is provided, returns all products (same as listOfflineProducts).
- * - When `search` is provided, filters products where `detalle` matches
- *   case-insensitive substring OR any entry in the `codigos` JSON array matches.
- *
- * This is the primary path for POS/sales product lookup offline.
  */
 export function searchOfflineProducts(
   db: Database.Database,
@@ -364,8 +434,6 @@ export function searchOfflineProducts(
 
 /**
  * Find a single product by an exact code (barcode/SKU) in the `codigos` JSON array.
- *
- * Used by POS barcode scan path and `findByCode` repository lookups.
  */
 export function findOfflineProductByCode(
   db: Database.Database,
@@ -376,8 +444,6 @@ export function findOfflineProductByCode(
     return { success: false, error: "Product not found by code" };
   }
 
-  // The codigos column stores a JSON array like ["LEC-0001","77912340001"].
-  // We search for the exact code string within that JSON.
   const likePattern = `%"${trimmed}"%`;
 
   const row = db

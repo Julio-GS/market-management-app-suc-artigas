@@ -3,9 +3,11 @@ import type Database from "better-sqlite3";
 import {
   getPendingOutboxCount,
   getFailedOutboxCount,
+  getOutboxStatusCounts,
   isRevalidationRequired,
   replayOutbox,
   type ReplayResult,
+  type OutboxStatusCounts,
   type SyncPushFn,
   type RevalidateFn,
   type SyncPushResponse,
@@ -29,6 +31,11 @@ export const SYNC_CHANNELS = {
 export interface SyncStatePayload {
   pendingCount: number;
   failedCount: number;
+  inFlightCount: number;
+  retryWaitCount: number;
+  blockedAuthCount: number;
+  blockedConflictCount: number;
+  manualFixCount: number;
   revalidationRequired: boolean;
   lastSyncAt: string | null;
 }
@@ -161,8 +168,13 @@ function createBackendRevalidateFn(
  *
  * `getDb` provides the current database instance so handlers never hold a
  * stale reference.
+ * `onSyncAuth` is an optional callback that receives the latest auth params
+ * so the connectivity listener can re-use them for automatic reconnect sync.
  */
-export function registerSyncIpc(getDb: () => Database.Database): void {
+export function registerSyncIpc(
+  getDb: () => Database.Database,
+  onSyncAuth?: (params: { apiBaseUrl: string; token: string }) => void,
+): void {
   // -- sync:get-state --------------------------------------------------------
   ipcMain.handle(SYNC_CHANNELS.GET_SYNC_STATE, (): SyncStatePayload => {
     try {
@@ -171,9 +183,16 @@ export function registerSyncIpc(getDb: () => Database.Database): void {
         .prepare("SELECT value FROM metadata WHERE key = 'last_sync_at'")
         .get() as { value: string } | undefined;
 
+      const counts = getOutboxStatusCounts(db);
+
       return {
-        pendingCount: getPendingOutboxCount(db),
-        failedCount: getFailedOutboxCount(db),
+        pendingCount: counts.pending,
+        failedCount: counts.failed,
+        inFlightCount: counts.in_flight,
+        retryWaitCount: counts.retry_wait,
+        blockedAuthCount: counts.blocked_auth,
+        blockedConflictCount: counts.blocked_conflict,
+        manualFixCount: counts.manual_fix,
         revalidationRequired: isRevalidationRequired(db),
         lastSyncAt: lastSyncRow?.value || null,
       };
@@ -181,6 +200,11 @@ export function registerSyncIpc(getDb: () => Database.Database): void {
       return {
         pendingCount: 0,
         failedCount: 0,
+        inFlightCount: 0,
+        retryWaitCount: 0,
+        blockedAuthCount: 0,
+        blockedConflictCount: 0,
+        manualFixCount: 0,
         revalidationRequired: false,
         lastSyncAt: null,
       };
@@ -190,7 +214,7 @@ export function registerSyncIpc(getDb: () => Database.Database): void {
   // -- sync:start ------------------------------------------------------------
   // Manual sync trigger.  Accepts optional auth context from the renderer.
   // Pushes pending outbox entries to the backend, then pulls server
-  // authoritative changes.
+  // authoritative changes only when push is not blocked.
   ipcMain.handle(
     SYNC_CHANNELS.START_SYNC,
     async (
@@ -210,6 +234,9 @@ export function registerSyncIpc(getDb: () => Database.Database): void {
         };
 
         if (params?.apiBaseUrl && params?.token) {
+          // Cache auth for automatic reconnect sync
+          onSyncAuth?.({ apiBaseUrl: params.apiBaseUrl, token: params.token });
+
           const pushFn = createBackendPushFn(params.apiBaseUrl, params.token);
           const revalidateFn = createBackendRevalidateFn(
             params.apiBaseUrl,
@@ -218,9 +245,12 @@ export function registerSyncIpc(getDb: () => Database.Database): void {
 
           pushResult = await replayOutbox(db, pushFn, revalidateFn);
 
-          // Pull server-authoritative changes after push
-          const pullFn = createBackendPullFn(params.apiBaseUrl, params.token);
-          await pullAndApply(db, pullFn);
+          // GAP 5: Only pull when push is not blocked by auth, conflict, or manual-fix.
+          // Pull reconciliation must not proceed when the push cycle was blocked.
+          if (!pushResult.revalidationBlocked && pushResult.blocked === 0) {
+            const pullFn = createBackendPullFn(params.apiBaseUrl, params.token);
+            await pullAndApply(db, pullFn);
+          }
         }
 
         return pushResult;

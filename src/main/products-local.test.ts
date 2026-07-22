@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { getDatabasePath, openDatabase, closeDatabase, runMigrations } from "./db";
 import {
+  createOfflineProduct,
+  updateOfflineProduct,
   searchOfflineProducts,
   findOfflineProductByCode,
 } from "./products-local";
@@ -21,6 +23,11 @@ function createTestDb(dir: string): Database.Database {
   const dbPath = getDatabasePath(dir);
   const db = openDatabase(dbPath);
   runMigrations(db);
+
+  db.prepare(`
+    INSERT INTO offline_sessions (user_id, username, last_validated_at, created_at, updated_at)
+    VALUES ('user-1', 'cashier1', '2026-07-10T00:00:00.000Z', '2026-07-10T00:00:00.000Z', '2026-07-10T00:00:00.000Z')
+  `).run();
 
   // Seed products with varied names and codes for search/findByCode tests
   db.prepare(`
@@ -116,6 +123,50 @@ describe("searchOfflineProducts", () => {
       expect(product.manejaStock).toBe(true);
       expect(product.pricingMode).toBe("fixed");
     });
+  });
+});
+
+describe("product mutation sanitization", () => {
+  let dir: string;
+  let db: Database.Database;
+
+  beforeEach(() => {
+    dir = tempDir();
+    db = createTestDb(dir);
+  });
+
+  afterEach(() => {
+    closeDatabase(db);
+    cleanup(dir);
+  });
+
+  it("sanitizes codigos before persisting newly created products", () => {
+    const result = createOfflineProduct(db, {
+      detalle: "Azucar",
+      codigos: ["  AZ-1  ", "", "AZ-1", "779123", "   "],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.product?.codigos).toEqual(["AZ-1", "779123"]);
+
+    const row = db
+      .prepare("SELECT codigos FROM products WHERE id = ?")
+      .get(result.product!.id) as { codigos: string };
+    expect(row.codigos).toBe('["AZ-1","779123"]');
+  });
+
+  it("sanitizes codigos before persisting product updates", () => {
+    const result = updateOfflineProduct(db, "prod-2", {
+      codigos: ["  PAN-2  ", "PAN-2", "", "   ", "7790002"],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.product?.codigos).toEqual(["PAN-2", "7790002"]);
+
+    const row = db
+      .prepare("SELECT codigos FROM products WHERE id = 'prod-2'")
+      .get() as { codigos: string };
+    expect(row.codigos).toBe('["PAN-2","7790002"]');
   });
 });
 

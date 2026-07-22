@@ -1,5 +1,15 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import {
+  getOfflineSession,
+  assertOfflineEligible,
+  getActorUserId,
+  markOfflineWorkRequiresRevalidation,
+  OfflineAuthRequiredError,
+} from "./offline-auth";
+
+// Re-export for IPC error mapping
+export { OfflineAuthRequiredError };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,6 +110,45 @@ function mapRow(row: OfflinePromotionRow): OfflinePromotionResult["promotion"] {
 }
 
 // ---------------------------------------------------------------------------
+// Outbox insert helper (shared across create/update/delete)
+// ---------------------------------------------------------------------------
+
+function insertPromotionOutbox(
+  db: Database.Database,
+  opType: string,
+  promoId: string,
+  payload: unknown,
+  createdAt: string,
+  installationId: string,
+  actorUserId: string | null,
+  entityLabel: string,
+): void {
+  const outboxId = randomUUID();
+  const idempotencyKey = `${installationId}:${outboxId}`;
+
+  db.prepare(`
+    INSERT INTO outbox
+      (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
+       payload, status, attempt_count, created_at, updated_at,
+       local_device_timestamp, actor_user_id, entity_label)
+    VALUES
+      (@id, @idempotency_key, @operation_type, 'promotion', @aggregate_id,
+       @payload, 'pending', 0, @created_at, @created_at,
+       @local_device_timestamp, @actor_user_id, @entity_label)
+  `).run({
+    id: outboxId,
+    idempotency_key: idempotencyKey,
+    operation_type: opType,
+    aggregate_id: promoId,
+    payload: JSON.stringify(payload),
+    created_at: createdAt,
+    local_device_timestamp: createdAt,
+    actor_user_id: actorUserId,
+    entity_label: entityLabel,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------
 
@@ -107,9 +156,12 @@ export function createOfflinePromotion(
   db: Database.Database,
   input: OfflinePromotionInput,
 ): OfflinePromotionResult {
+  assertOfflineEligible(db);
+
   const promoId = randomUUID();
   const createdAt = now();
   const installationId = getInstallationId(db);
+  const actorUserId = getActorUserId(db);
 
   const run = db.transaction(() => {
     db.prepare(`
@@ -133,37 +185,25 @@ export function createOfflinePromotion(
       created_at: createdAt,
     });
 
-    // Outbox entry
-    const outboxId = randomUUID();
-    const idempotencyKey = `${installationId}:${outboxId}`;
+    insertPromotionOutbox(
+      db, "promotion_create", promoId,
+      {
+        id: promoId,
+        name: input.name,
+        description: input.description ?? null,
+        scope: input.scope ?? "product",
+        product_id: input.product_id ?? null,
+        type: input.type,
+        discount_percent: input.discount_percent ?? null,
+        start_date: input.start_date ?? null,
+        end_date: input.end_date ?? null,
+        weekdays: input.weekdays ?? null,
+      },
+      createdAt, installationId, actorUserId,
+      `Promotion create: ${input.name}`,
+    );
 
-    const payload = JSON.stringify({
-      id: promoId,
-      name: input.name,
-      description: input.description ?? null,
-      scope: input.scope ?? "product",
-      product_id: input.product_id ?? null,
-      type: input.type,
-      discount_percent: input.discount_percent ?? null,
-      start_date: input.start_date ?? null,
-      end_date: input.end_date ?? null,
-      weekdays: input.weekdays ?? null,
-    });
-
-    db.prepare(`
-      INSERT INTO outbox
-        (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
-         payload, status, attempt_count, created_at, updated_at)
-      VALUES
-        (@id, @idempotency_key, 'promotion_create', 'promotion', @aggregate_id,
-         @payload, 'pending', 0, @created_at, @created_at)
-    `).run({
-      id: outboxId,
-      idempotency_key: idempotencyKey,
-      aggregate_id: promoId,
-      payload,
-      created_at: createdAt,
-    });
+    markOfflineWorkRequiresRevalidation(db);
   });
 
   run();
@@ -181,8 +221,11 @@ export function updateOfflinePromotion(
   promoId: string,
   input: OfflinePromotionUpdateInput,
 ): OfflinePromotionResult {
+  assertOfflineEligible(db);
+
   const createdAt = now();
   const installationId = getInstallationId(db);
+  const actorUserId = getActorUserId(db);
 
   const existing = db.prepare("SELECT * FROM promotions WHERE id = ?").get(promoId) as OfflinePromotionRow | undefined;
   if (!existing) {
@@ -221,10 +264,6 @@ export function updateOfflinePromotion(
       updated_at: createdAt,
     });
 
-    // Outbox entry
-    const outboxId = randomUUID();
-    const idempotencyKey = `${installationId}:${outboxId}`;
-
     const payload: Record<string, unknown> = { id: promoId };
     if (input.name !== undefined) payload.name = input.name;
     if (input.description !== undefined) payload.description = input.description;
@@ -237,20 +276,13 @@ export function updateOfflinePromotion(
     if (input.weekdays !== undefined) payload.weekdays = input.weekdays;
     if (input.enabled !== undefined) payload.enabled = input.enabled;
 
-    db.prepare(`
-      INSERT INTO outbox
-        (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
-         payload, status, attempt_count, created_at, updated_at)
-      VALUES
-        (@id, @idempotency_key, 'promotion_update', 'promotion', @aggregate_id,
-         @payload, 'pending', 0, @created_at, @created_at)
-    `).run({
-      id: outboxId,
-      idempotency_key: idempotencyKey,
-      aggregate_id: promoId,
-      payload: JSON.stringify(payload),
-      created_at: createdAt,
-    });
+    insertPromotionOutbox(
+      db, "promotion_update", promoId, payload,
+      createdAt, installationId, actorUserId,
+      `Promotion update: ${promoId.slice(0, 8)}`,
+    );
+
+    markOfflineWorkRequiresRevalidation(db);
   });
 
   run();
@@ -267,33 +299,34 @@ export function deleteOfflinePromotion(
   db: Database.Database,
   promoId: string,
 ): OfflinePromotionResult {
+  assertOfflineEligible(db);
+
   const createdAt = now();
   const installationId = getInstallationId(db);
+  const actorUserId = getActorUserId(db);
 
   const existing = db.prepare("SELECT * FROM promotions WHERE id = ?").get(promoId) as OfflinePromotionRow | undefined;
   if (!existing) {
     return { success: false, error: "Promotion not found" };
   }
 
+  // Snapshot for recovery on rejection
+  const beforeSnapshot = mapRow(existing)!;
+
   const run = db.transaction(() => {
     db.prepare("DELETE FROM promotions WHERE id = ?").run(promoId);
 
-    const outboxId = randomUUID();
-    const idempotencyKey = `${installationId}:${outboxId}`;
+    insertPromotionOutbox(
+      db, "promotion_delete", promoId,
+      {
+        id: promoId,
+        before: beforeSnapshot,
+      },
+      createdAt, installationId, actorUserId,
+      `Promotion delete: ${beforeSnapshot.name}`,
+    );
 
-    db.prepare(`
-      INSERT INTO outbox
-        (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
-         payload, status, attempt_count, created_at, updated_at)
-      VALUES
-        (@id, @idempotency_key, 'promotion_delete', 'promotion', @aggregate_id,
-         '{}', 'pending', 0, @created_at, @created_at)
-    `).run({
-      id: outboxId,
-      idempotency_key: idempotencyKey,
-      aggregate_id: promoId,
-      created_at: createdAt,
-    });
+    markOfflineWorkRequiresRevalidation(db);
   });
 
   run();

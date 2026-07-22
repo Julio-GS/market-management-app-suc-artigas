@@ -237,4 +237,108 @@ describe("runMigrations", () => {
       closeDatabase(db);
     }
   });
+
+  // -------------------------------------------------------------------
+  // v4 migration — additive outbox columns and index for sync state
+  // -------------------------------------------------------------------
+
+  it("adds local_device_timestamp, manual_fix_reason, and entity_label columns to outbox (v4)", () => {
+    const db = openDatabase(dbPath);
+    try {
+      runMigrations(db);
+
+      const cols = db
+        .prepare("PRAGMA table_info('outbox')")
+        .all() as { name: string }[];
+      const colNames = new Set(cols.map((c) => c.name));
+
+      expect(colNames.has("local_device_timestamp")).toBe(true);
+      expect(colNames.has("manual_fix_reason")).toBe(true);
+      expect(colNames.has("entity_label")).toBe(true);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it("creates idx_outbox_status_created index (v4)", () => {
+    const db = openDatabase(dbPath);
+    try {
+      runMigrations(db);
+
+      const indexes = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='index'")
+        .all() as { name: string }[];
+      const indexNames = indexes.map((i) => i.name);
+      expect(indexNames).toContain("idx_outbox_status_created");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it("old outbox rows get NULL for new columns after v4 migration", () => {
+    const db = openDatabase(dbPath);
+    try {
+      runMigrations(db);
+
+      // Insert an outbox row without specifying the new columns
+      db.prepare(`
+        INSERT INTO outbox
+          (id, idempotency_key, operation_type, aggregate_type, aggregate_id,
+           payload, status, attempt_count, created_at, updated_at)
+        VALUES
+          ('old-out-1', 'ik:old-1', 'sale_create', 'sale', 'sale-old',
+           '{}', 'pending', 0, '2026-01-01', '2026-01-01')
+      `).run();
+
+      const row = db
+        .prepare("SELECT local_device_timestamp, manual_fix_reason, entity_label FROM outbox WHERE id = 'old-out-1'")
+        .get() as { local_device_timestamp: string | null; manual_fix_reason: string | null; entity_label: string | null };
+      expect(row.local_device_timestamp).toBeNull();
+      expect(row.manual_fix_reason).toBeNull();
+      expect(row.entity_label).toBeNull();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it("v4 migration is additive — does not drop or rewrite existing tables", () => {
+    const db = openDatabase(dbPath);
+    try {
+      runMigrations(db);
+
+      const tables = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        .all() as { name: string }[];
+      const names = new Set(tables.map((t) => t.name));
+
+      expect(names.has("sales")).toBe(true);
+      expect(names.has("sale_items")).toBe(true);
+      expect(names.has("sale_payments")).toBe(true);
+      expect(names.has("stock_movements")).toBe(true);
+      expect(names.has("outbox")).toBe(true);
+      expect(names.has("products")).toBe(true);
+      expect(names.has("stock_balances")).toBe(true);
+      expect(names.has("offline_sessions")).toBe(true);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it("v4 migration is idempotent (running twice does not fail)", () => {
+    const db = openDatabase(dbPath);
+    try {
+      runMigrations(db);
+      runMigrations(db);
+
+      const cols = db
+        .prepare("PRAGMA table_info('outbox')")
+        .all() as { name: string }[];
+      const colNames = new Set(cols.map((c) => c.name));
+      expect(colNames.has("local_device_timestamp")).toBe(true);
+      expect(colNames.has("manual_fix_reason")).toBe(true);
+      expect(colNames.has("entity_label")).toBe(true);
+    } finally {
+      closeDatabase(db);
+    }
+  });
 });
