@@ -22,7 +22,9 @@ import { OutboxSqliteRepository } from "./infrastructure/persistence/outbox-sqli
 import { registerProviderPurchasesIpc, unregisterProviderPurchasesIpc } from "./adapters/provider-purchases/provider-purchases-ipc";
 import { ProviderPurchaseService } from "./application/provider-purchases/provider-purchase-service";
 import { ProviderPurchasesSqliteRepository } from "./infrastructure/persistence/provider-purchases-sqlite-repository";
-import { registerReportsIpc, unregisterReportsIpc } from "./reports-ipc";
+import { registerReportsIpc, unregisterReportsIpc } from "./adapters/reports/reports-ipc";
+import { ReportService } from "./application/reports/report-service";
+import { ReportsSqliteRepository } from "./infrastructure/persistence/reports-sqlite-repository";
 import { registerSupportIpc, unregisterSupportIpc } from "./support-ipc";
 import { onConnectivityChange } from "./connectivity-state";
 import { replayOutbox, recoverStaleInFlightEntries, type RevalidateFn } from "./sync-engine";
@@ -148,7 +150,9 @@ function initDatabase(
   const providerPurchasesRepository = new ProviderPurchasesSqliteRepository(getDb, outboxRepository);
   const providerPurchaseService = new ProviderPurchaseService(providerPurchasesRepository);
   registerProviderPurchasesIpc(providerPurchaseService);
-  registerReportsIpc(getDb);
+  const reportsRepository = new ReportsSqliteRepository(getDb);
+  const reportService = new ReportService(reportsRepository);
+  registerReportsIpc(reportService);
   registerSupportIpc(getDb);
 
   // -------------------------------------------------------------------
