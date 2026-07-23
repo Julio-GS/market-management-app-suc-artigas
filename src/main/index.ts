@@ -25,7 +25,9 @@ import { ProviderPurchasesSqliteRepository } from "./infrastructure/persistence/
 import { registerReportsIpc, unregisterReportsIpc } from "./adapters/reports/reports-ipc";
 import { ReportService } from "./application/reports/report-service";
 import { ReportsSqliteRepository } from "./infrastructure/persistence/reports-sqlite-repository";
-import { registerSupportIpc, unregisterSupportIpc } from "./support-ipc";
+import { registerSupportIpc, unregisterSupportIpc } from "./adapters/support/support-ipc";
+import { SupportService } from "./application/support/support-service";
+import { SupportSqliteRepository } from "./infrastructure/persistence/support-sqlite-repository";
 import { onConnectivityChange } from "./connectivity-state";
 import { replayOutbox, recoverStaleInFlightEntries, type RevalidateFn } from "./sync-engine";
 import { seedDefaultAdmin } from "./offline-auth";
@@ -153,7 +155,9 @@ function initDatabase(
   const reportsRepository = new ReportsSqliteRepository(getDb);
   const reportService = new ReportService(reportsRepository);
   registerReportsIpc(reportService);
-  registerSupportIpc(getDb);
+  const supportRepository = new SupportSqliteRepository(getDb);
+  const supportService = new SupportService(supportRepository);
+  registerSupportIpc(supportService);
 
   // -------------------------------------------------------------------
   // Connectivity-change listener: trigger whole-outbox sync on reconnect

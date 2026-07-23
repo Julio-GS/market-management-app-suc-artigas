@@ -15,7 +15,7 @@ import { PRODUCTS_CHANNELS } from "../main/adapters/products/products-ipc";
 import { PROMOTIONS_CHANNELS } from "../main/adapters/promotions/promotions-ipc";
 import { PROVIDER_PURCHASES_CHANNELS } from "../main/adapters/provider-purchases/provider-purchases-ipc";
 import { REPORTS_CHANNELS } from "../main/adapters/reports/reports-ipc";
-import { SUPPORT_CHANNELS, type OutboxListItem, type OutboxRetryResult } from "../main/support-ipc";
+import { SUPPORT_CHANNELS, type OutboxListItem, type OutboxRetryResult } from "../main/adapters/support/support-ipc";
 import type { OfflineState } from "../main/offline-state";
 import type { BootstrapResult } from "../main/bootstrap";
 import type { OfflineSaleInput, OfflineSaleIpcResult } from "../main/sales-ipc";
