@@ -10,7 +10,9 @@ import { getUpdateStatus } from "./updater-status";
 import { getDatabasePath, openDatabase, runMigrations, closeDatabase } from "./db";
 import { registerOfflineIpc, unregisterOfflineIpc } from "./offline-ipc";
 import { registerBootstrapIpc, unregisterBootstrapIpc } from "./bootstrap-ipc";
-import { registerSalesIpc, unregisterSalesIpc } from "./sales-ipc";
+import { registerSalesIpc, unregisterSalesIpc } from "./adapters/sales/sales-ipc";
+import { SaleService } from "./application/sales/sale-service";
+import { SalesSqliteRepository } from "./infrastructure/persistence/sales-sqlite-repository";
 import { registerSyncIpc, unregisterSyncIpc, createBackendPushFn } from "./sync-ipc";
 import { registerProductsIpc, unregisterProductsIpc } from "./adapters/products/products-ipc";
 import { registerPromotionsIpc, unregisterPromotionsIpc } from "./adapters/promotions/promotions-ipc";
@@ -140,9 +142,11 @@ function initDatabase(
   // is still null.
   registerOfflineIpc(getDb);
   registerBootstrapIpc(getDb);
-  registerSalesIpc(getDb);
-  registerSyncIpc(getDb, setLastSyncAuth);
   const outboxRepository = new OutboxSqliteRepository(getDb);
+  const salesRepository = new SalesSqliteRepository(getDb, outboxRepository);
+  const saleService = new SaleService(salesRepository);
+  registerSalesIpc(saleService);
+  registerSyncIpc(getDb, setLastSyncAuth);
   const productsRepository = new ProductsSqliteRepository(getDb, outboxRepository);
   const productService = new ProductService(productsRepository);
   registerProductsIpc(productService);

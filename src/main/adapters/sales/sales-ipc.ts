@@ -1,17 +1,18 @@
+// ---------------------------------------------------------------------------
+// Adapter: Sales IPC handlers
+//
+// Owns channel constants, lightweight payload validation, Electron
+// registration/unregistration, result mapping, and legacy error codes.
+// Delegates all persistence work to SaleService.
+// ---------------------------------------------------------------------------
+
 import { ipcMain } from "electron";
-import type Database from "better-sqlite3";
-import {
-  completeOfflineSale,
-  listOfflineSales,
-  FiscalBlockedError,
-  OfflineAuthRequiredError,
-  type OfflineSaleInput,
-  type OfflineSaleResult,
-  type ListedSale,
-} from "./sales-local";
+import { FiscalBlockedError } from "../../domain/sales/sale";
+import { OfflineAuthRequiredError } from "../../offline-auth";
+import { type SaleService } from "../../application/sales/sale-service";
 
 // Re-export for preload consumers
-export type { OfflineSaleInput, ListedSale };
+export type { OfflineSaleInput, ListedSale } from "../../domain/sales/sale";
 
 // ---------------------------------------------------------------------------
 // Minimal runtime payload validation
@@ -20,11 +21,11 @@ export type { OfflineSaleInput, ListedSale };
 /**
  * Validate the IPC payload shape before passing it to the local sale
  * transaction. This is a lightweight schema guard, not exhaustive business
- * validation — that lives in completeOfflineSale.
+ * validation — that lives in the repository.
  */
 export function validateSaleInput(
   input: unknown,
-): { valid: true; data: OfflineSaleInput } | { valid: false; error: string } {
+): { valid: true; data: import("../../domain/sales/sale").OfflineSaleInput } | { valid: false; error: string } {
   if (!input || typeof input !== "object") {
     return { valid: false, error: "Sale input must be an object" };
   }
@@ -73,7 +74,7 @@ export function validateSaleInput(
 
   return {
     valid: true,
-    data: input as OfflineSaleInput,
+    data: input as import("../../domain/sales/sale").OfflineSaleInput,
   };
 }
 
@@ -112,7 +113,7 @@ export interface OfflineSaleIpcResult {
 /**
  * Register all sales-related IPC handlers.
  */
-export function registerSalesIpc(getDb: () => Database.Database): void {
+export function registerSalesIpc(saleService: SaleService): void {
   ipcMain.handle(
     SALES_CHANNELS.COMPLETE_SALE,
     (_event, input: unknown): OfflineSaleIpcResult => {
@@ -123,8 +124,7 @@ export function registerSalesIpc(getDb: () => Database.Database): void {
       }
 
       try {
-        const db = getDb();
-        const result: OfflineSaleResult = completeOfflineSale(db, validated.data);
+        const result = saleService.completeSale(validated.data);
 
         return {
           success: true,
@@ -160,19 +160,7 @@ export function registerSalesIpc(getDb: () => Database.Database): void {
     SALES_CHANNELS.GET_SALE,
     (_event, saleId: string): OfflineSaleIpcResult => {
       try {
-        const db = getDb();
-
-        const sale = db.prepare(`
-          SELECT id, total, customer, invoice_status, invoice_requested, created_at
-          FROM sales WHERE id = ?
-        `).get(saleId) as {
-          id: string;
-          total: string;
-          customer: string;
-          invoice_status: string;
-          invoice_requested: number;
-          created_at: string;
-        } | undefined;
+        const sale = saleService.getSale(saleId);
 
         if (!sale) {
           return { success: false, error: "Sale not found", errorCode: "NOT_FOUND" };
@@ -184,8 +172,8 @@ export function registerSalesIpc(getDb: () => Database.Database): void {
             id: sale.id,
             total: sale.total,
             customer: sale.customer,
-            invoiceStatus: sale.invoice_status,
-            createdAt: sale.created_at,
+            invoiceStatus: sale.invoiceStatus,
+            createdAt: sale.createdAt,
           },
         };
       } catch (err) {
@@ -198,10 +186,9 @@ export function registerSalesIpc(getDb: () => Database.Database): void {
   // -- sales:list ----------------------------------------------------------
   ipcMain.handle(
     SALES_CHANNELS.LIST_SALES,
-    (): ListedSale[] => {
+    (): import("../../domain/sales/sale").ListedSale[] => {
       try {
-        const db = getDb();
-        return listOfflineSales(db);
+        return saleService.listSales();
       } catch {
         return [];
       }
