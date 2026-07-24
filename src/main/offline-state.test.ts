@@ -34,7 +34,9 @@ import {
   registerOfflineIpc,
   unregisterOfflineIpc,
   OFFLINE_CHANNELS,
-} from "./offline-ipc";
+} from "./adapters/offline/offline-ipc";
+import { OfflineService } from "./application/offline/offline-service";
+import { OfflineSqliteRepository } from "./infrastructure/persistence/offline-sqlite-repository";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -343,7 +345,9 @@ describe("offline IPC handler resilience", () => {
     const getDb = () => {
       throw new Error("DB not available");
     };
-    registerOfflineIpc(getDb);
+        const repo = new OfflineSqliteRepository(getDb);
+        const service = new OfflineService(repo);
+        registerOfflineIpc(service);
 
     const handler = capturedHandlers[OFFLINE_CHANNELS.GET_STATE];
     expect(handler).toBeDefined();
@@ -354,7 +358,9 @@ describe("offline IPC handler resilience", () => {
     const getDb = () => {
       throw new Error("DB not available");
     };
-    registerOfflineIpc(getDb);
+        const repo = new OfflineSqliteRepository(getDb);
+        const service = new OfflineService(repo);
+        registerOfflineIpc(service);
 
     const handler = capturedHandlers[OFFLINE_CHANNELS.GET_STATE];
     expect(handler).toBeDefined();
@@ -373,7 +379,9 @@ describe("offline IPC handler resilience", () => {
     runMigrations(realDb);
 
     const getDb = () => realDb;
-    registerOfflineIpc(getDb);
+        const repo = new OfflineSqliteRepository(getDb);
+        const service = new OfflineService(repo);
+        registerOfflineIpc(service);
 
     const handler = capturedHandlers[OFFLINE_CHANNELS.GET_STATE];
     expect(handler).toBeDefined();
@@ -392,7 +400,9 @@ describe("offline IPC handler resilience", () => {
     const getDb = () => {
       throw new Error("n/a");
     };
-    registerOfflineIpc(getDb);
+        const repo = new OfflineSqliteRepository(getDb);
+        const service = new OfflineService(repo);
+        registerOfflineIpc(service);
     expect(capturedHandlers[OFFLINE_CHANNELS.GET_STATE]).toBeDefined();
 
     unregisterOfflineIpc();

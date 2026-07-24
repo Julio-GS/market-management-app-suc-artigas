@@ -8,7 +8,9 @@ import { startPackagedNextServer, stopPackagedNextServer } from "./next-server";
 import { registerUpdaterIpc } from "./updater";
 import { getUpdateStatus } from "./updater-status";
 import { getDatabasePath, openDatabase, runMigrations, closeDatabase } from "./db";
-import { registerOfflineIpc, unregisterOfflineIpc } from "./offline-ipc";
+import { registerOfflineIpc, unregisterOfflineIpc } from "./adapters/offline/offline-ipc";
+import { OfflineService } from "./application/offline/offline-service";
+import { OfflineSqliteRepository } from "./infrastructure/persistence/offline-sqlite-repository";
 import { registerBootstrapIpc, unregisterBootstrapIpc } from "./bootstrap-ipc";
 import { registerSalesIpc, unregisterSalesIpc } from "./adapters/sales/sales-ipc";
 import { SaleService } from "./application/sales/sale-service";
@@ -140,7 +142,9 @@ function initDatabase(
   // can query state, even when the database failed to initialize. Both
   // handlers return degraded/failed results when getDb() throws because db
   // is still null.
-  registerOfflineIpc(getDb);
+  const offlineRepository = new OfflineSqliteRepository(getDb);
+  const offlineService = new OfflineService(offlineRepository);
+  registerOfflineIpc(offlineService);
   registerBootstrapIpc(getDb);
   const outboxRepository = new OutboxSqliteRepository(getDb);
   const salesRepository = new SalesSqliteRepository(getDb, outboxRepository);

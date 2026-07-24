@@ -7,7 +7,7 @@ import {
   type OfflineLoginParams,
   type OfflineLoginIpcResult,
   type OfflineSessionIpcResult,
-} from "../main/offline-ipc";
+} from "../main/adapters/offline/offline-ipc";
 import { BOOTSTRAP_CHANNELS } from "../main/bootstrap-ipc";
 import { SALES_CHANNELS, type ListedSale } from "../main/adapters/sales/sales-ipc";
 import { SYNC_CHANNELS } from "../main/sync-ipc";
