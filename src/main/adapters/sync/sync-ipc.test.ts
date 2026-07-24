@@ -9,13 +9,13 @@ const { mockPullAndApply, mockReplayOutbox } = vi.hoisted(() => ({
   mockReplayOutbox: vi.fn(),
 }));
 
-vi.mock("./pull-reconciliation", () => ({
+vi.mock("../../pull-reconciliation", () => ({
   pullAndApply: mockPullAndApply,
 }));
 
 // Mock sync-engine module for pull-gate tests
-vi.mock("./sync-engine", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./sync-engine")>();
+vi.mock("../../sync-engine", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../sync-engine")>();
   return {
     ...actual,
     replayOutbox: mockReplayOutbox,
@@ -48,7 +48,7 @@ import {
   unregisterSyncIpc,
   createBackendPushFn,
 } from "./sync-ipc";
-import type { OutboxEntryRow } from "./sync-engine";
+import type { OutboxEntryRow } from "../../sync-engine";
 
 // Helper to extract a typed handler from the mocked IPC
 function getHandler(channel: string): (...args: unknown[]) => Promise<unknown> {

@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// Adapter: Sync IPC handlers
+//
+// Owns channel constants, exported IPC types, registration/unregistration,
+// backend sync function factories, and legacy handler fallbacks.
+// Delegates replay and pull behavior to protected shared sync infrastructure.
+// ---------------------------------------------------------------------------
+
 import { ipcMain } from "electron";
 import type Database from "better-sqlite3";
 import {
@@ -11,12 +19,12 @@ import {
   type SyncPushFn,
   type RevalidateFn,
   type SyncPushResponse,
-} from "./sync-engine";
+} from "../../sync-engine";
 import {
   pullAndApply,
   type PullResult,
   type PullResponse,
-} from "./pull-reconciliation";
+} from "../../pull-reconciliation";
 
 // ---------------------------------------------------------------------------
 // IPC channel constants

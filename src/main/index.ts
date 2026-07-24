@@ -17,7 +17,7 @@ import { BootstrapSqliteRepository } from "./infrastructure/persistence/bootstra
 import { registerSalesIpc, unregisterSalesIpc } from "./adapters/sales/sales-ipc";
 import { SaleService } from "./application/sales/sale-service";
 import { SalesSqliteRepository } from "./infrastructure/persistence/sales-sqlite-repository";
-import { registerSyncIpc, unregisterSyncIpc, createBackendPushFn } from "./sync-ipc";
+import { registerSyncIpc, unregisterSyncIpc, createBackendPushFn } from "./adapters/sync/sync-ipc";
 import { registerProductsIpc, unregisterProductsIpc } from "./adapters/products/products-ipc";
 import { registerPromotionsIpc, unregisterPromotionsIpc } from "./adapters/promotions/promotions-ipc";
 import { ProductService } from "./application/products/product-service";
