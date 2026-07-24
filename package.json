@@ -1,0 +1,46 @@
+{
+  "name": "market-management-desktop",
+  "version": "0.1.0",
+  "description": "Market Management desktop application shell",
+  "author": "Omnia",
+  "private": true,
+  "main": "dist/main/index.js",
+  "scripts": {
+    "clean": "rimraf dist release build/frontend",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "build:desktop": "tsc -p tsconfig.build.json",
+    "build:frontend": "pnpm --dir ../frontend-management-market/supermarket-management-frontend build",
+    "copy:frontend": "node scripts/copy-frontend.mjs",
+    "prepare:frontend": "pnpm build:frontend && pnpm copy:frontend",
+    "test": "vitest run",
+    "start": "electron .",
+    "rebuild:electron": "electron-rebuild -f -w better-sqlite3 -v 33.4.11",
+    "dev": "pnpm build:desktop && pnpm rebuild:electron && electron .",
+    "package": "pnpm build:desktop && pnpm prepare:frontend && electron-builder --publish never",
+    "package:dir": "pnpm build:desktop && pnpm prepare:frontend && electron-builder --dir --publish never",
+    "publish:github": "node scripts/require-gh-token.mjs && pnpm build:desktop && pnpm prepare:frontend && electron-builder --publish always"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "electron-log": "^5.2.4",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.10.0",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "better-sqlite3"
+    ]
+  }
+}

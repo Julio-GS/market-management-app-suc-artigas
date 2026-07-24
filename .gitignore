@@ -1,0 +1,30 @@
+# Local Pi runtime state
+.atl/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+release/
+out/
+build/frontend/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

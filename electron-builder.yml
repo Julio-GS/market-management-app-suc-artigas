@@ -1,0 +1,47 @@
+appId: com.omnia.market-management
+productName: Market Management
+copyright: Copyright © 2026 Omnia
+
+asar: true
+
+asarUnpack:
+  - "node_modules/better-sqlite3/**"
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+
+extraResources:
+  - from: build/frontend
+    to: frontend
+    filter:
+      - "**/*"
+  - from: build/default-config.json
+    to: default-config.json
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Market Management
+
+publish:
+  provider: github
+  owner: Julio-GS
+  repo: market-management-app-suc-basualdo
+  releaseType: release
+  channel: latest
+  publishAutoUpdate: true
