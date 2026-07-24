@@ -8,7 +8,7 @@ import {
   type OfflineLoginIpcResult,
   type OfflineSessionIpcResult,
 } from "../main/adapters/offline/offline-ipc";
-import { BOOTSTRAP_CHANNELS } from "../main/bootstrap-ipc";
+import { BOOTSTRAP_CHANNELS, type BootstrapResult } from "../main/adapters/bootstrap/bootstrap-ipc";
 import { SALES_CHANNELS, type ListedSale } from "../main/adapters/sales/sales-ipc";
 import { SYNC_CHANNELS } from "../main/sync-ipc";
 import { PRODUCTS_CHANNELS } from "../main/adapters/products/products-ipc";
@@ -17,7 +17,6 @@ import { PROVIDER_PURCHASES_CHANNELS } from "../main/adapters/provider-purchases
 import { REPORTS_CHANNELS } from "../main/adapters/reports/reports-ipc";
 import { SUPPORT_CHANNELS, type OutboxListItem, type OutboxRetryResult } from "../main/adapters/support/support-ipc";
 import type { OfflineState } from "../main/offline-state";
-import type { BootstrapResult } from "../main/bootstrap";
 import type { OfflineSaleInput, OfflineSaleIpcResult } from "../main/adapters/sales/sales-ipc";
 import type { SyncStatePayload } from "../main/sync-ipc";
 import type { PullResult } from "../main/pull-reconciliation";

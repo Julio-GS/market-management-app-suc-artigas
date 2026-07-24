@@ -11,7 +11,9 @@ import { getDatabasePath, openDatabase, runMigrations, closeDatabase } from "./d
 import { registerOfflineIpc, unregisterOfflineIpc } from "./adapters/offline/offline-ipc";
 import { OfflineService } from "./application/offline/offline-service";
 import { OfflineSqliteRepository } from "./infrastructure/persistence/offline-sqlite-repository";
-import { registerBootstrapIpc, unregisterBootstrapIpc } from "./bootstrap-ipc";
+import { registerBootstrapIpc, unregisterBootstrapIpc } from "./adapters/bootstrap/bootstrap-ipc";
+import { BootstrapService } from "./application/bootstrap/bootstrap-service";
+import { BootstrapSqliteRepository } from "./infrastructure/persistence/bootstrap-sqlite-repository";
 import { registerSalesIpc, unregisterSalesIpc } from "./adapters/sales/sales-ipc";
 import { SaleService } from "./application/sales/sale-service";
 import { SalesSqliteRepository } from "./infrastructure/persistence/sales-sqlite-repository";
@@ -145,7 +147,9 @@ function initDatabase(
   const offlineRepository = new OfflineSqliteRepository(getDb);
   const offlineService = new OfflineService(offlineRepository);
   registerOfflineIpc(offlineService);
-  registerBootstrapIpc(getDb);
+  const bootstrapRepository = new BootstrapSqliteRepository(getDb);
+  const bootstrapService = new BootstrapService(bootstrapRepository);
+  registerBootstrapIpc(bootstrapService);
   const outboxRepository = new OutboxSqliteRepository(getDb);
   const salesRepository = new SalesSqliteRepository(getDb, outboxRepository);
   const saleService = new SaleService(salesRepository);
