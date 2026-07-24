@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Domain: Bootstrap snapshot contracts & result types
 //
-// Types preserved byte-identical from the legacy src/main/bootstrap.ts.
+// Types preserved byte-identical from the previous Bootstrap implementation.
 // BootstrapStatus is re-exported from the shared cross-cutting module.
 // ---------------------------------------------------------------------------
 

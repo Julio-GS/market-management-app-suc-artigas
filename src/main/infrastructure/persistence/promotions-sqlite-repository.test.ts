@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Infrastructure: PromotionsSqliteRepository integration tests
 //
-// Migrated from src/main/promotions-local.test.ts to exercise the new
-// production-path repository (PromotionsSqliteRepository + OutboxSqliteRepository).
+// Exercises the production-path repository (PromotionsSqliteRepository +
+// OutboxSqliteRepository).
 // Preserves the same SQLite-backed assertions: create, update, delete, list,
 // auth guard, outbox v4 metadata, revalidation, delete snapshot, not-found errors.
 // ---------------------------------------------------------------------------

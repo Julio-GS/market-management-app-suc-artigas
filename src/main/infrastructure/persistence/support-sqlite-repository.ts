@@ -3,7 +3,7 @@
 //
 // SQLite implementation of ISupportRepository. Preserves legacy SQL,
 // expected failure results, status gates, retry-sale transaction, and conflict
-// branches from src/main/support-ipc.ts exactly.
+// branches from the previous Support implementation exactly.
 // ---------------------------------------------------------------------------
 
 import type Database from "better-sqlite3";

@@ -3,9 +3,9 @@
 //
 // Electron primary adapter. Owns PROVIDER_PURCHASES_CHANNELS, handler
 // registration/unregistration, and legacy-compatible error mapping. Preserves
-// the same permissive casting behavior as the legacy provider-purchases-ipc.ts
-// — no strict Products-style runtime validation or errorCode values are
-// introduced. Calls ProviderPurchaseService; does NOT import better-sqlite3 or
+// the existing permissive casting behavior — no strict Products-style runtime
+// validation or errorCode values are introduced. Calls ProviderPurchaseService;
+// does NOT import better-sqlite3 or
 // call getDb().
 // ---------------------------------------------------------------------------
 

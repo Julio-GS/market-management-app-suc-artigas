@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // Infrastructure: ProviderPurchasesSqliteRepository integration tests
 //
-// Migrated from src/main/provider-purchases-local.test.ts. Preserves all
-// legacy assertions against create/update/delete/list behavior, outbox
-// enqueue, offline auth, revalidation, and transaction boundaries.
+// Preserves Provider Purchases assertions against create/update/delete/list
+// behavior, outbox enqueue, offline auth, revalidation, and transaction
+// boundaries.
 // ---------------------------------------------------------------------------
 
 import fs from "node:fs";

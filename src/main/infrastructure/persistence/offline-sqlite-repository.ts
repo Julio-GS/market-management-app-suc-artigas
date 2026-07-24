@@ -3,9 +3,9 @@
 //
 // Implements IOfflineRepository using better-sqlite3, fetch, and the shared
 // infrastructure modules (offline-state, offline-auth, connectivity-state).
-// Preserves legacy online-then-offline login fallback, timeout, JWT decode,
-// network error classification, session/state behavior, and result shapes
-// exactly as they were in src/main/offline-ipc.ts.
+// Preserves the online-then-offline login fallback, timeout, JWT decode,
+// network error classification, session/state behavior, and result shapes from
+// the previous Offline IPC implementation.
 // ---------------------------------------------------------------------------
 
 import type Database from "better-sqlite3";

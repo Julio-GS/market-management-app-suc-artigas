@@ -24,7 +24,7 @@ import {
 } from "../../domain/sales/sale";
 
 // ---------------------------------------------------------------------------
-// Helpers (preserved from legacy sales-local.ts)
+// Helpers preserved from the previous Sales persistence implementation.
 // ---------------------------------------------------------------------------
 
 function getInstallationId(db: Database.Database): string {

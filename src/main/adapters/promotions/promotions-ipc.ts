@@ -2,9 +2,9 @@
 // Adapter: Promotions IPC handlers
 //
 // Electron primary adapter. Owns PROMOTIONS_CHANNELS, handler registration/
-// unregistration, and legacy-compatible error mapping. Preserves the same
-// permissive casting behavior as the legacy promotions-ipc.ts — no strict
-// Products-style runtime validation or errorCode values are introduced.
+// unregistration, and legacy-compatible error mapping. Preserves the existing
+// permissive casting behavior — no strict Products-style runtime validation or
+// errorCode values are introduced.
 // Calls PromotionService; does NOT import better-sqlite3 or call getDb().
 // ---------------------------------------------------------------------------
 

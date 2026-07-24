@@ -4,7 +4,7 @@
 // Uses a real in-memory SQLite database with migrations applied.
 // Covers status reads, snapshot ingestion, fetch/status transitions,
 // resume guard, transaction rollback, idempotency, and password_hash
-// preservation. Preserves every assertion from the legacy bootstrap.test.ts.
+// preservation. Preserves every assertion from the previous Bootstrap tests.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

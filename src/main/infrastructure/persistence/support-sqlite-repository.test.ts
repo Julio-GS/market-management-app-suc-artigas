@@ -4,7 +4,7 @@
 // Strict TDD RED phase: imports fail because SupportSqliteRepository and
 // domain types do not exist yet. After GREEN implementation, these tests
 // verify legacy SQL, status transitions, retry-sale transaction, conflict
-// branches, and list/export ordering preserved from src/main/support-ipc.ts.
+// branches, and list/export ordering preserved by the Support migration.
 // ---------------------------------------------------------------------------
 
 import fs from "node:fs";

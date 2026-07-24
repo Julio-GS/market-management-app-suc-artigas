@@ -2,7 +2,8 @@
 // Infrastructure: Reports SQLite repository
 //
 // Read-only implementation of IReportsRepository. Moves the legacy SELECT
-// SQL, row mapping, and staleness computation from src/main/reports-ipc.ts
+// SQL, row mapping, and staleness computation from the previous Reports
+// implementation.
 // without adding auth, outbox writes, transactions, or revalidation.
 // ---------------------------------------------------------------------------
 

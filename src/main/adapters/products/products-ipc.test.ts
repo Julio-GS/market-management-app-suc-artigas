@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // Adapter: Products IPC handler tests
 //
-// Migrated from src/main/products-ipc.test.ts to exercise the new production-path
-// IPC adapter. Uses a mocked ProductService to verify validation, error mapping,
-// and channel names without needing a real SQLite database.
+// Exercises the production-path IPC adapter. Uses a mocked ProductService to
+// verify validation, error mapping, and channel names without needing a real
+// SQLite database.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

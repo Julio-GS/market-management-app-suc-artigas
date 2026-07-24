@@ -4,7 +4,7 @@
 // Strict TDD RED phase: imports fail because ReportsSqliteRepository and
 // domain types do not exist yet. After GREEN implementation, these tests
 // verify legacy SQL, row mapping, staleness computation, and read-only
-// behaviour preserved from src/main/reports-ipc.ts.
+// behavior preserved by the Reports migration.
 // ---------------------------------------------------------------------------
 
 import fs from "node:fs";

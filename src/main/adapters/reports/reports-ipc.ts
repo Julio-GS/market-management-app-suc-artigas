@@ -3,8 +3,8 @@
 //
 // Electron primary adapter. Owns REPORTS_CHANNELS, handler
 // registration/unregistration, permissive limit casting, and legacy-compatible
-// error mapping. Preserves the same permissive casting behavior as the legacy
-// reports-ipc.ts — no strict Products-style validation. Calls ReportService;
+// error mapping. Preserves the existing permissive casting behavior — no strict
+// Products-style validation. Calls ReportService;
 // does NOT import better-sqlite3 or call getDb().
 // ---------------------------------------------------------------------------
 

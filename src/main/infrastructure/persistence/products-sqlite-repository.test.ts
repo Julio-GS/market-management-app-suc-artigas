@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Infrastructure: ProductsSqliteRepository integration tests
 //
-// Migrated from src/main/products-local.test.ts to exercise the new
-// production-path repository (ProductsSqliteRepository + OutboxSqliteRepository).
+// Exercises the production-path repository (ProductsSqliteRepository +
+// OutboxSqliteRepository).
 // Preserves the same SQLite-backed assertions: search, shape mapping, codigos
 // sanitization, findByCode, and outbox transaction semantics.
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 //
 // Implements IPromotionsRepository using better-sqlite3. Preserves all existing
 // SQL, row mapping, transaction boundaries, outbox semantics, auth guards, and
-// revalidation behavior from the original promotions-local.ts.
+// revalidation behavior from the previous Promotions persistence implementation.
 // ---------------------------------------------------------------------------
 
 import { randomUUID } from "node:crypto";
