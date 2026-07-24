@@ -83,7 +83,7 @@ describe("provider-purchases-ipc (new adapter)", () => {
 
       const handler = await getHandler(PROVIDER_PURCHASES_CHANNELS.CREATE);
       const input = { provider_name: "ACME Corp", amount: "1500.00", payment_method: "transfer" };
-      const result = handler({}, input) as { success: boolean; purchase?: { providerName: string } };
+      const result = await handler({}, input) as { success: boolean; purchase?: { providerName: string } };
 
       expect(result.success).toBe(true);
       expect(result.purchase?.providerName).toBe("ACME Corp");
@@ -96,7 +96,7 @@ describe("provider-purchases-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROVIDER_PURCHASES_CHANNELS.CREATE);
-      const result = handler({}, { provider_name: "Fail", amount: "1.00" }) as { success: boolean; error?: string; errorCode?: string };
+      const result = await handler({}, { provider_name: "Fail", amount: "1.00" }) as { success: boolean; error?: string; errorCode?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Offline auth required");
@@ -109,7 +109,7 @@ describe("provider-purchases-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROVIDER_PURCHASES_CHANNELS.CREATE);
-      const result = handler({}, { provider_name: "Fail", amount: "1.00" }) as { success: boolean; error?: string };
+      const result = await handler({}, { provider_name: "Fail", amount: "1.00" }) as { success: boolean; error?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Failed to create purchase");
@@ -133,7 +133,7 @@ describe("provider-purchases-ipc (new adapter)", () => {
 
       const handler = await getHandler(PROVIDER_PURCHASES_CHANNELS.UPDATE);
       const input = { provider_name: "Updated Corp", amount: "2000.00" };
-      const result = handler({}, "pp-1", input) as { success: boolean; purchase?: { providerName: string } };
+      const result = await handler({}, "pp-1", input) as { success: boolean; purchase?: { providerName: string } };
 
       expect(result.success).toBe(true);
       expect(result.purchase?.providerName).toBe("Updated Corp");
@@ -146,7 +146,7 @@ describe("provider-purchases-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROVIDER_PURCHASES_CHANNELS.UPDATE);
-      const result = handler({}, "nonexistent", { provider_name: "Nope" }) as { success: boolean; error?: string };
+      const result = await handler({}, "nonexistent", { provider_name: "Nope" }) as { success: boolean; error?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Provider purchase not found");
@@ -158,7 +158,7 @@ describe("provider-purchases-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROVIDER_PURCHASES_CHANNELS.UPDATE);
-      const result = handler({}, "x", {}) as { success: boolean; error?: string };
+      const result = await handler({}, "x", {}) as { success: boolean; error?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Failed to update purchase");
@@ -174,7 +174,7 @@ describe("provider-purchases-ipc (new adapter)", () => {
       (repo.delete as ReturnType<typeof vi.fn>).mockReturnValue({ success: true });
 
       const handler = await getHandler(PROVIDER_PURCHASES_CHANNELS.DELETE);
-      const result = handler({}, "pp-1") as { success: boolean };
+      const result = await handler({}, "pp-1") as { success: boolean };
 
       expect(result.success).toBe(true);
       expect(repo.delete).toHaveBeenCalledWith("pp-1");
@@ -186,7 +186,7 @@ describe("provider-purchases-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROVIDER_PURCHASES_CHANNELS.DELETE);
-      const result = handler({}, "nonexistent") as { success: boolean; error?: string };
+      const result = await handler({}, "nonexistent") as { success: boolean; error?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Provider purchase not found");
@@ -198,7 +198,7 @@ describe("provider-purchases-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROVIDER_PURCHASES_CHANNELS.DELETE);
-      const result = handler({}, "x") as { success: boolean; error?: string };
+      const result = await handler({}, "x") as { success: boolean; error?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Failed to delete purchase");

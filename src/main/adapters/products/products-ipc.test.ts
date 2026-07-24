@@ -75,7 +75,7 @@ describe("products-ipc (new adapter)", () => {
   describe("CREATE validation", () => {
     it("rejects invalid create payloads before calling the service", async () => {
       const handler = await getHandler(PRODUCTS_CHANNELS.CREATE);
-      const result = handler({}, { detalle: "", codigos: [123] }) as { success: boolean; error?: string };
+      const result = await handler({}, { detalle: "", codigos: [123] }) as { success: boolean; error?: string };
       expect(result.success).toBe(false);
       expect(result.error).toContain("detalle");
       expect(repo.create).not.toHaveBeenCalled();
@@ -94,7 +94,7 @@ describe("products-ipc (new adapter)", () => {
       (repo.create as ReturnType<typeof vi.fn>).mockReturnValue(expected);
 
       const handler = await getHandler(PRODUCTS_CHANNELS.CREATE);
-      const result = handler({}, {
+      const result = await handler({}, {
         detalle: "Azucar",
         codigos: ["  AZ-1  ", "AZ-1", "", "   ", "779123"],
         facturable: true,
@@ -114,7 +114,7 @@ describe("products-ipc (new adapter)", () => {
   describe("UPDATE validation", () => {
     it("rejects invalid update payloads before calling the service", async () => {
       const handler = await getHandler(PRODUCTS_CHANNELS.UPDATE);
-      const result = handler({}, "prod-1", { detalle: 42, codigos: ["OK", "   "] }) as { success: boolean; error?: string };
+      const result = await handler({}, "prod-1", { detalle: 42, codigos: ["OK", "   "] }) as { success: boolean; error?: string };
       expect(result.success).toBe(false);
       expect(result.error).toContain("detalle");
       expect(repo.update).not.toHaveBeenCalled();
@@ -133,7 +133,7 @@ describe("products-ipc (new adapter)", () => {
       (repo.update as ReturnType<typeof vi.fn>).mockReturnValue(expected);
 
       const handler = await getHandler(PRODUCTS_CHANNELS.UPDATE);
-      const result = handler({}, "prod-1", { detalle: "Updated", codigos: ["OK"] }) as { success: boolean; product?: { detalle: string } };
+      const result = await handler({}, "prod-1", { detalle: "Updated", codigos: ["OK"] }) as { success: boolean; product?: { detalle: string } };
 
       expect(result.success).toBe(true);
       expect(result.product?.detalle).toBe("Updated");
@@ -149,7 +149,7 @@ describe("products-ipc (new adapter)", () => {
       (repo.delete as ReturnType<typeof vi.fn>).mockReturnValue({ success: true });
 
       const handler = await getHandler(PRODUCTS_CHANNELS.DELETE);
-      const result = handler({}, "prod-1") as { success: boolean };
+      const result = await handler({}, "prod-1") as { success: boolean };
 
       expect(result.success).toBe(true);
       expect(repo.delete).toHaveBeenCalledWith("prod-1");
@@ -163,7 +163,7 @@ describe("products-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PRODUCTS_CHANNELS.DELETE);
-      const result = handler({}, "prod-protected") as { success: boolean; error?: string; errorCode?: string };
+      const result = await handler({}, "prod-protected") as { success: boolean; error?: string; errorCode?: string };
 
       expect(result.success).toBe(false);
       expect(result.errorCode).toBe("PROTECTED_PRODUCT");

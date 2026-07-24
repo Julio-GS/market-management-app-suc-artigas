@@ -10,6 +10,7 @@ import { ipcMain } from "electron";
 import { FiscalBlockedError } from "../../domain/sales/sale";
 import { OfflineAuthRequiredError } from "../../offline-auth";
 import { type SaleService } from "../../application/sales/sale-service";
+import type { BusyTracker } from "../../busy-state";
 
 // Re-export for preload consumers
 export type { OfflineSaleInput, ListedSale } from "../../domain/sales/sale";
@@ -112,47 +113,52 @@ export interface OfflineSaleIpcResult {
 
 /**
  * Register all sales-related IPC handlers.
+ * When `busyTracker` is provided, the sale-completion handler marks the app
+ * busy during the database write so update installs are deferred safely.
  */
-export function registerSalesIpc(saleService: SaleService): void {
+export function registerSalesIpc(saleService: SaleService, busyTracker?: BusyTracker): void {
   ipcMain.handle(
     SALES_CHANNELS.COMPLETE_SALE,
-    (_event, input: unknown): OfflineSaleIpcResult => {
-      // Validate IPC payload before touching the database
+    async (_event, input: unknown): Promise<OfflineSaleIpcResult> => {
       const validated = validateSaleInput(input);
       if (!validated.valid) {
         return { success: false, error: validated.error, errorCode: "INVALID_INPUT" };
       }
 
-      try {
-        const result = saleService.completeSale(validated.data);
+      const run = async (): Promise<OfflineSaleIpcResult> => {
+        try {
+          const result = saleService.completeSale(validated.data);
 
-        return {
-          success: true,
-          sale: result.sale,
-          warnings: result.warnings,
-        };
-      } catch (err) {
-        if (err instanceof FiscalBlockedError) {
+          return {
+            success: true,
+            sale: result.sale,
+            warnings: result.warnings,
+          };
+        } catch (err) {
+          if (err instanceof FiscalBlockedError) {
+            return {
+              success: false,
+              error: err.message,
+              errorCode: "FISCAL_BLOCKED",
+            };
+          }
+          if (err instanceof OfflineAuthRequiredError) {
+            return {
+              success: false,
+              error: err.message,
+              errorCode: "OFFLINE_AUTH_REQUIRED",
+            };
+          }
+          const message = err instanceof Error ? err.message : "Sale failed";
           return {
             success: false,
-            error: err.message,
-            errorCode: "FISCAL_BLOCKED",
+            error: message,
+            errorCode: "SALE_ERROR",
           };
         }
-        if (err instanceof OfflineAuthRequiredError) {
-          return {
-            success: false,
-            error: err.message,
-            errorCode: "OFFLINE_AUTH_REQUIRED",
-          };
-        }
-        const message = err instanceof Error ? err.message : "Sale failed";
-        return {
-          success: false,
-          error: message,
-          errorCode: "SALE_ERROR",
-        };
-      }
+      };
+
+      return busyTracker?.runProtectedOperation("sale", "Complete sale", run) ?? run();
     },
   );
 
@@ -183,7 +189,6 @@ export function registerSalesIpc(saleService: SaleService): void {
     },
   );
 
-  // -- sales:list ----------------------------------------------------------
   ipcMain.handle(
     SALES_CHANNELS.LIST_SALES,
     (): import("../../domain/sales/sale").ListedSale[] => {

@@ -1,7 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { decodeDesktopConfig, type DesktopConfig } from "../main/config";
-import { UPDATE_CHANNELS, type UpdateEventPayload } from "../main/updater";
-import type { UpdateStatus } from "../main/updater-status";
+import { UPDATE_CHANNELS, type UpdateEventPayload, type UpdateStatusPayload } from "../main/updater";
 import {
   OFFLINE_CHANNELS,
   type OfflineLoginParams,
@@ -33,11 +32,11 @@ interface MarketDesktopBridge {
   getConfig(): DesktopConfig;
   platform: NodeJS.Platform;
   updates: {
-    getStatus(): Promise<UpdateStatus>;
+    getStatus(): Promise<UpdateStatusPayload>;
     check(): Promise<unknown>;
     download(): Promise<unknown>;
     installAndRestart(): Promise<unknown>;
-    onStatus(callback: (payload: UpdateEventPayload) => void): () => void;
+    onStatus(callback: (payload: UpdateStatusPayload & UpdateEventPayload) => void): () => void;
   };
   offline: {
     getState(): Promise<OfflineState>;
@@ -115,12 +114,12 @@ const marketDesktop: MarketDesktopBridge = {
   getConfig: () => desktopConfig,
   platform: process.platform,
   updates: {
-    getStatus: () => ipcRenderer.invoke(UPDATE_CHANNELS.GET_STATUS) as Promise<UpdateStatus>,
+    getStatus: () => ipcRenderer.invoke(UPDATE_CHANNELS.GET_STATUS) as Promise<UpdateStatusPayload>,
     check: () => ipcRenderer.invoke(UPDATE_CHANNELS.CHECK),
     download: () => ipcRenderer.invoke(UPDATE_CHANNELS.DOWNLOAD),
     installAndRestart: () => ipcRenderer.invoke(UPDATE_CHANNELS.INSTALL_AND_RESTART),
     onStatus: (callback) => {
-      const listener = (_event: Electron.IpcRendererEvent, payload: UpdateEventPayload) => callback(payload);
+      const listener = (_event: Electron.IpcRendererEvent, payload: UpdateStatusPayload & UpdateEventPayload) => callback(payload);
       ipcRenderer.on(UPDATE_CHANNELS.STATUS, listener);
       return () => ipcRenderer.off(UPDATE_CHANNELS.STATUS, listener);
     }

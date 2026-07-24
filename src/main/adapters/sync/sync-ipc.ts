@@ -9,13 +9,10 @@
 import { ipcMain } from "electron";
 import type Database from "better-sqlite3";
 import {
-  getPendingOutboxCount,
-  getFailedOutboxCount,
   getOutboxStatusCounts,
   isRevalidationRequired,
   replayOutbox,
   type ReplayResult,
-  type OutboxStatusCounts,
   type SyncPushFn,
   type RevalidateFn,
   type SyncPushResponse,
@@ -25,6 +22,7 @@ import {
   type PullResult,
   type PullResponse,
 } from "../../pull-reconciliation";
+import type { BusyTracker } from "../../busy-state";
 
 // ---------------------------------------------------------------------------
 // IPC channel constants
@@ -52,11 +50,6 @@ export interface SyncStatePayload {
 // Pull function factory
 // ---------------------------------------------------------------------------
 
-/**
- * Build a `pullFn` that calls the backend sync/pull endpoint from the main
- * process.  The caller is responsible for injecting a valid auth token and
- * the backend base URL.
- */
 function createBackendPullFn(
   apiBaseUrl: string,
   token: string,
@@ -85,14 +78,9 @@ function createBackendPullFn(
 }
 
 // ---------------------------------------------------------------------------
-// Push function factory (Slice 6: wired from stub)
+// Push function factory
 // ---------------------------------------------------------------------------
 
-/**
- * Build a `pushFn` that calls the backend sync/push endpoint from the main
- * process.  The caller is responsible for injecting a valid auth token and
- * the backend base URL.
- */
 export function createBackendPushFn(
   apiBaseUrl: string,
   token: string,
@@ -122,18 +110,13 @@ export function createBackendPushFn(
     });
 
     if (!response.ok) {
-      throw new Error(
-        `Push request failed: ${response.status} ${response.statusText}`,
-      );
+      throw new Error(`Push request failed: ${response.status} ${response.statusText}`);
     }
 
     return (await response.json()) as SyncPushResponse;
   };
 }
 
-/**
- * Build a `revalidateFn` that calls the backend auth/revalidate endpoint.
- */
 function createBackendRevalidateFn(
   apiBaseUrl: string,
   token: string,
@@ -171,19 +154,11 @@ function createBackendRevalidateFn(
 // Handler registration
 // ---------------------------------------------------------------------------
 
-/**
- * Register sync-related IPC handlers on the main process.
- *
- * `getDb` provides the current database instance so handlers never hold a
- * stale reference.
- * `onSyncAuth` is an optional callback that receives the latest auth params
- * so the connectivity listener can re-use them for automatic reconnect sync.
- */
 export function registerSyncIpc(
   getDb: () => Database.Database,
   onSyncAuth?: (params: { apiBaseUrl: string; token: string }) => void,
+  busyTracker?: BusyTracker,
 ): void {
-  // -- sync:get-state --------------------------------------------------------
   ipcMain.handle(SYNC_CHANNELS.GET_SYNC_STATE, (): SyncStatePayload => {
     try {
       const db = getDb();
@@ -219,74 +194,76 @@ export function registerSyncIpc(
     }
   });
 
-  // -- sync:start ------------------------------------------------------------
-  // Manual sync trigger.  Accepts optional auth context from the renderer.
-  // Pushes pending outbox entries to the backend, then pulls server
-  // authoritative changes only when push is not blocked.
   ipcMain.handle(
     SYNC_CHANNELS.START_SYNC,
     async (
       _event,
       params?: { apiBaseUrl?: string; token?: string },
     ): Promise<ReplayResult> => {
-      try {
-        const db = getDb();
+      const run = async () => {
+        try {
+          const db = getDb();
 
-        // Push outbox entries when auth context is available
-        let pushResult: ReplayResult = {
-          synced: 0,
-          failed: 0,
-          blocked: 0,
-          skipped: 0,
-          revalidationBlocked: false,
-        };
+          let pushResult: ReplayResult = {
+            synced: 0,
+            failed: 0,
+            blocked: 0,
+            skipped: 0,
+            revalidationBlocked: false,
+          };
 
-        if (params?.apiBaseUrl && params?.token) {
-          // Cache auth for automatic reconnect sync
-          onSyncAuth?.({ apiBaseUrl: params.apiBaseUrl, token: params.token });
+          if (params?.apiBaseUrl && params?.token) {
+            onSyncAuth?.({ apiBaseUrl: params.apiBaseUrl, token: params.token });
 
-          const pushFn = createBackendPushFn(params.apiBaseUrl, params.token);
-          const revalidateFn = createBackendRevalidateFn(
-            params.apiBaseUrl,
-            params.token,
-          );
+            const pushFn = createBackendPushFn(params.apiBaseUrl, params.token);
+            const revalidateFn = createBackendRevalidateFn(params.apiBaseUrl, params.token);
 
-          pushResult = await replayOutbox(db, pushFn, revalidateFn);
+            pushResult = await replayOutbox(db, pushFn, revalidateFn);
 
-          // GAP 5: Only pull when push is not blocked by auth, conflict, or manual-fix.
-          // Pull reconciliation must not proceed when the push cycle was blocked.
-          if (!pushResult.revalidationBlocked && pushResult.blocked === 0) {
-            const pullFn = createBackendPullFn(params.apiBaseUrl, params.token);
-            await pullAndApply(db, pullFn);
+            if (!pushResult.revalidationBlocked && pushResult.blocked === 0) {
+              const pullFn = createBackendPullFn(params.apiBaseUrl, params.token);
+              await pullAndApply(db, pullFn);
+            }
           }
-        }
 
-        return pushResult;
-      } catch {
-        return {
-          synced: 0,
-          failed: 0,
-          blocked: 0,
-          skipped: 0,
-          revalidationBlocked: false,
-        };
-      }
+          return pushResult;
+        } catch {
+          return {
+            synced: 0,
+            failed: 0,
+            blocked: 0,
+            skipped: 0,
+            revalidationBlocked: false,
+          };
+        }
+      };
+
+      return busyTracker?.runProtectedOperation("sync", "Start sync", run) ?? run();
     },
   );
 
-  // -- sync:pull -------------------------------------------------------------
-  // Pull server-authoritative changes and apply them to local stores.
-  // Accepts auth context from the renderer.
   ipcMain.handle(
     SYNC_CHANNELS.PULL,
     async (
       _event,
       params?: { apiBaseUrl?: string; token?: string },
     ): Promise<PullResult> => {
-      try {
-        const db = getDb();
+      const run = async () => {
+        try {
+          const db = getDb();
 
-        if (!params?.apiBaseUrl || !params?.token) {
+          if (!params?.apiBaseUrl || !params?.token) {
+            return {
+              applied: 0,
+              skipped: 0,
+              cursor: null,
+              hasMore: false,
+            };
+          }
+
+          const pullFn = createBackendPullFn(params.apiBaseUrl, params.token);
+          return await pullAndApply(db, pullFn);
+        } catch {
           return {
             applied: 0,
             skipped: 0,
@@ -294,24 +271,13 @@ export function registerSyncIpc(
             hasMore: false,
           };
         }
+      };
 
-        const pullFn = createBackendPullFn(params.apiBaseUrl, params.token);
-        return await pullAndApply(db, pullFn);
-      } catch {
-        return {
-          applied: 0,
-          skipped: 0,
-          cursor: null,
-          hasMore: false,
-        };
-      }
+      return busyTracker?.runProtectedOperation("sync", "Pull changes", run) ?? run();
     },
   );
 }
 
-/**
- * Remove all sync IPC handlers.
- */
 export function unregisterSyncIpc(): void {
   ipcMain.removeHandler(SYNC_CHANNELS.START_SYNC);
   ipcMain.removeHandler(SYNC_CHANNELS.GET_SYNC_STATE);

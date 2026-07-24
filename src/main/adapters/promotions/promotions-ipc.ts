@@ -10,6 +10,7 @@
 
 import { ipcMain } from "electron";
 import type { PromotionService } from "../../application/promotions/promotion-service";
+import type { BusyTracker } from "../../busy-state";
 import type {
   OfflinePromotionInput,
   OfflinePromotionUpdateInput,
@@ -34,29 +35,44 @@ export const PROMOTIONS_CHANNELS = {
 // Handler registration
 // ---------------------------------------------------------------------------
 
-export function registerPromotionsIpc(promotionService: PromotionService): void {
-  ipcMain.handle(PROMOTIONS_CHANNELS.CREATE, (_event, input: unknown): OfflinePromotionResult => {
-    try {
-      return promotionService.createPromotion(input as OfflinePromotionInput);
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : "Failed to create promotion" };
-    }
+export function registerPromotionsIpc(
+  promotionService: PromotionService,
+  busyTracker?: BusyTracker,
+): void {
+  ipcMain.handle(PROMOTIONS_CHANNELS.CREATE, (_event, input: unknown): Promise<OfflinePromotionResult> | OfflinePromotionResult => {
+    const run = async () => {
+      try {
+        return promotionService.createPromotion(input as OfflinePromotionInput);
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : "Failed to create promotion" };
+      }
+    };
+
+    return busyTracker?.runProtectedOperation("write", "Create promotion", run) ?? run();
   });
 
-  ipcMain.handle(PROMOTIONS_CHANNELS.UPDATE, (_event, promotionId: string, input: unknown): OfflinePromotionResult => {
-    try {
-      return promotionService.updatePromotion(promotionId, input as OfflinePromotionUpdateInput);
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : "Failed to update promotion" };
-    }
+  ipcMain.handle(PROMOTIONS_CHANNELS.UPDATE, (_event, promotionId: string, input: unknown): Promise<OfflinePromotionResult> | OfflinePromotionResult => {
+    const run = async () => {
+      try {
+        return promotionService.updatePromotion(promotionId, input as OfflinePromotionUpdateInput);
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : "Failed to update promotion" };
+      }
+    };
+
+    return busyTracker?.runProtectedOperation("write", "Update promotion", run) ?? run();
   });
 
-  ipcMain.handle(PROMOTIONS_CHANNELS.DELETE, (_event, promotionId: string): OfflinePromotionResult => {
-    try {
-      return promotionService.deletePromotion(promotionId);
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : "Failed to delete promotion" };
-    }
+  ipcMain.handle(PROMOTIONS_CHANNELS.DELETE, (_event, promotionId: string): Promise<OfflinePromotionResult> | OfflinePromotionResult => {
+    const run = async () => {
+      try {
+        return promotionService.deletePromotion(promotionId);
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : "Failed to delete promotion" };
+      }
+    };
+
+    return busyTracker?.runProtectedOperation("write", "Delete promotion", run) ?? run();
   });
 
   ipcMain.handle(PROMOTIONS_CHANNELS.LIST, (_event): OfflinePromotionResult[] => {

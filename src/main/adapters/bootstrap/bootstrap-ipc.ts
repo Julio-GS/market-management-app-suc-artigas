@@ -8,6 +8,7 @@
 import { ipcMain } from "electron";
 import type { BootstrapService } from "../../application/bootstrap/bootstrap-service";
 import type { BootstrapResult } from "../../domain/bootstrap/bootstrap";
+import type { BusyTracker } from "../../busy-state";
 
 // Re-export for preload consumers
 export type { BootstrapResult } from "../../domain/bootstrap/bootstrap";
@@ -31,7 +32,10 @@ export const BOOTSTRAP_CHANNELS = {
  *
  * @param bootstrapService The bootstrap application service.
  */
-export function registerBootstrapIpc(bootstrapService: BootstrapService): void {
+export function registerBootstrapIpc(
+  bootstrapService: BootstrapService,
+  busyTracker?: BusyTracker,
+): void {
   ipcMain.handle(BOOTSTRAP_CHANNELS.BOOTSTRAP_STATUS, (): BootstrapResult => {
     try {
       return bootstrapService.getStatus();
@@ -51,18 +55,23 @@ export function registerBootstrapIpc(bootstrapService: BootstrapService): void {
       _event,
       params: { token: string; apiBaseUrl: string },
     ): Promise<BootstrapResult> => {
-      try {
-        return await bootstrapService.start(params.token, params.apiBaseUrl);
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Bootstrap failed";
-        return {
-          status: "failed",
-          ready: false,
-          syncCursor: null,
-          error: message,
-        };
-      }
+      const run = async (): Promise<BootstrapResult> => {
+        try {
+          return await bootstrapService.start(params.token, params.apiBaseUrl);
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Bootstrap failed";
+          const failure: BootstrapResult = {
+            status: "failed",
+            ready: false,
+            syncCursor: null,
+            error: message,
+          };
+          return failure;
+        }
+      };
+
+      return busyTracker?.runProtectedOperation("bootstrap", "Start bootstrap", run) ?? run();
     },
   );
 
@@ -72,18 +81,23 @@ export function registerBootstrapIpc(bootstrapService: BootstrapService): void {
       _event,
       params: { token: string; apiBaseUrl: string },
     ): Promise<BootstrapResult> => {
-      try {
-        return await bootstrapService.resume(params.token, params.apiBaseUrl);
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Bootstrap resume failed";
-        return {
-          status: "failed",
-          ready: false,
-          syncCursor: null,
-          error: message,
-        };
-      }
+      const run = async (): Promise<BootstrapResult> => {
+        try {
+          return await bootstrapService.resume(params.token, params.apiBaseUrl);
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Bootstrap resume failed";
+          const failure: BootstrapResult = {
+            status: "failed",
+            ready: false,
+            syncCursor: null,
+            error: message,
+          };
+          return failure;
+        }
+      };
+
+      return busyTracker?.runProtectedOperation("bootstrap", "Resume bootstrap", run) ?? run();
     },
   );
 }

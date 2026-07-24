@@ -114,14 +114,46 @@ These checks verify current behavior only. Do not treat this list as approval fo
 
 ## Update-disabled fallback
 
-Updates are scaffolded but disabled by default until a signed build and generic HTTPS update provider are configured.
+Updates are scaffolded but disabled by default. The renderer must call `updates.check()` → `updates.download()` → `updates.installAndRestart()` explicitly; no automatic download or install is performed.
 
 | Check | Action | Expected result |
 | --- | --- | --- |
-| Default config | Open `build/default-config.json` | `updates.enabled` is `false`. |
+| Default config | Open `build/default-config.json` | `updates.enabled` is `false`; GitHub provider defaults (`provider`, `owner`, `repo`, `channel`) are present. |
 | Runtime config | Call `window.marketDesktop.getConfig()` in DevTools | `updateEnabled` is `false` by default. |
-| Update status | Call `window.marketDesktop.updates.getStatus()` | Returns disabled status with a reason. |
+| Update status | Call `window.marketDesktop.updates.getStatus()` | Returns `{ state: "disabled", enabled: false, reason: "..." }`. |
 | Check update | Call `window.marketDesktop.updates.check()` | Returns disabled status and does not crash. |
+
+## Installer build and publish smoke
+
+These checks verify the GitHub Releases publishing pipeline. Publishing requires a `GH_TOKEN` with repository release permissions.
+
+### Local packaging (non-publishing)
+
+| Check | Action | Expected result |
+| --- | --- | --- |
+| Package (no publish) | Run `pnpm package` | NSIS installer produced; no GitHub release is created. |
+| Package dir (no publish) | Run `pnpm package:dir` | `release/win-unpacked/` is created. |
+| GH_TOKEN preflight | Run `node scripts/require-gh-token.mjs` without `GH_TOKEN` | Script exits with code 1 and a clear error message. |
+
+### Publishing (requires GH_TOKEN)
+
+| Check | Action | Expected result |
+| --- | --- | --- |
+| Publish to GitHub | Run `pnpm publish:github` with a valid `GH_TOKEN` | GitHub Release is created with `.exe`, `.blockmap`, and `latest.yml`. |
+| Release version | Inspect the GitHub Release | Tag and `latest.yml` version match `package.json` version. |
+| Update detection | Install previous version, enable updates, call `updates.check()` | App detects the newer published version. |
+| Download | Call `updates.download()` from renderer | Progress events fire; update transitions to `downloaded-pending`. |
+| Busy deferral | Start a sale, then call `updates.installAndRestart()` | Status transitions to `blocked-by-busy-state`; app does NOT restart. |
+| Idle install | Complete the sale so the app is idle | Deferred install resumes; app restarts with the new version. |
+
+### Signing
+
+| Check | Action | Expected result |
+| --- | --- | --- |
+| Unsigned build | Build without `CSC_LINK` / `CSC_KEY_PASSWORD` | Installer is produced (unsigned). Acceptable for internal validation. |
+| Signed build | Build with `CSC_LINK` and `CSC_KEY_PASSWORD` | Installer is signed with the Authenticode certificate. |
+
+> Production deployment requires an EV/OV Authenticode certificate to avoid Windows SmartScreen warnings. Certificate procurement is a deployment follow-up.
 
 ## Security sanity checks
 
@@ -134,7 +166,7 @@ Updates are scaffolded but disabled by default until a signed build and generic 
 
 ## Release readiness notes
 
-- Keep updates disabled until signing and HTTPS hosting are available.
+- Keep updates disabled until signing and GitHub Releases publishing are confirmed.
 - Do not ship a broad preload API. Only expose explicit allowlisted methods.
 - Resolve the Next workspace-root warning later with `turbopack.root` if it becomes noisy or changes build output.
 - Backend and frontend behavior must remain independently verifiable outside Electron.

@@ -4,6 +4,16 @@ export interface UpdateConfig {
   enabled: boolean;
   provider?: "generic" | "github";
   url?: string;
+  /** GitHub Releases owner (required when provider is "github"). */
+  owner?: string;
+  /** GitHub Releases repository (required when provider is "github"). */
+  repo?: string;
+  /** Release channel. Defaults to "latest" at feed-setup time. */
+  channel?: string;
+  /** Private repository distribution. Defaults to false. */
+  private?: boolean;
+  /** Allow downgrade to a lower version. Defaults to false. */
+  allowDowngrade?: boolean;
 }
 
 export interface OfflineConfig {
@@ -40,6 +50,11 @@ interface ConfigFileShape {
     enabled?: unknown;
     provider?: unknown;
     url?: unknown;
+    owner?: unknown;
+    repo?: unknown;
+    channel?: unknown;
+    private?: unknown;
+    allowDowngrade?: unknown;
   };
   offline?: {
     enabled?: unknown;
@@ -134,7 +149,12 @@ export function resolveDesktopConfig(options: ResolveDesktopConfigOptions = {}):
     updates: {
       enabled: updateEnabled,
       provider: updateProvider(userConfig.updates?.provider) ?? updateProvider(defaultConfig.updates?.provider),
-      url: stringValue(userConfig.updates?.url) ?? stringValue(defaultConfig.updates?.url)
+      url: stringValue(userConfig.updates?.url) ?? stringValue(defaultConfig.updates?.url),
+      owner: stringValue(userConfig.updates?.owner) ?? stringValue(defaultConfig.updates?.owner),
+      repo: stringValue(userConfig.updates?.repo) ?? stringValue(defaultConfig.updates?.repo),
+      channel: stringValue(userConfig.updates?.channel) ?? stringValue(defaultConfig.updates?.channel),
+      private: booleanValue(userConfig.updates?.private) ?? booleanValue(defaultConfig.updates?.private) ?? false,
+      allowDowngrade: booleanValue(userConfig.updates?.allowDowngrade) ?? booleanValue(defaultConfig.updates?.allowDowngrade) ?? false,
     },
     offline: {
       enabled: offlineEnabled,

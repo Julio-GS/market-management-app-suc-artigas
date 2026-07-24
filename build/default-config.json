@@ -2,7 +2,11 @@
   "apiBaseUrl": "http://localhost:3001/api/v1",
   "frontendDevUrl": "http://localhost:3000",
   "updates": {
-    "enabled": false
+    "enabled": false,
+    "provider": "github",
+    "owner": "Julio-GS",
+    "repo": "market-management-app-suc-basualdo",
+    "channel": "latest"
   },
   "offline": {
     "enabled": true,

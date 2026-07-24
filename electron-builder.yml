@@ -38,4 +38,10 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: Market Management
 
-publish: null
+publish:
+  provider: github
+  owner: Julio-GS
+  repo: market-management-app-suc-basualdo
+  releaseType: release
+  channel: latest
+  publishAutoUpdate: true
