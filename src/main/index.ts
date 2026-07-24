@@ -5,7 +5,8 @@ import Database from "better-sqlite3";
 import { encodeDesktopConfig, resolveDesktopConfig } from "./config";
 import { isAllowedPermission, isAllowedRendererNavigation, shouldOpenExternally } from "./navigation";
 import { startPackagedNextServer, stopPackagedNextServer } from "./next-server";
-import { registerUpdaterIpc } from "./updater";
+import { registerUpdaterIpc, unregisterUpdaterIpc } from "./updater";
+import { createBusyTracker } from "./busy-state";
 import { getUpdateStatus } from "./updater-status";
 import { getDatabasePath, openDatabase, runMigrations, closeDatabase } from "./db";
 import { registerOfflineIpc, unregisterOfflineIpc } from "./adapters/offline/offline-ipc";
@@ -40,6 +41,9 @@ import { seedDefaultAdmin } from "./offline-auth";
 
 /** Cached auth params supplied by the renderer for automatic sync on reconnect. */
 let _lastSyncAuth: { apiBaseUrl: string; token: string } | null = null;
+
+/** Main-process busy tracker created once and shared with all protected IPC handlers. */
+const busyTracker = createBusyTracker();
 
 /** Store auth params from the renderer so reconnect-sync can re-use them. */
 function setLastSyncAuth(params: { apiBaseUrl: string; token: string }): void {
@@ -149,27 +153,27 @@ function initDatabase(
   registerOfflineIpc(offlineService);
   const bootstrapRepository = new BootstrapSqliteRepository(getDb);
   const bootstrapService = new BootstrapService(bootstrapRepository);
-  registerBootstrapIpc(bootstrapService);
+  registerBootstrapIpc(bootstrapService, busyTracker);
   const outboxRepository = new OutboxSqliteRepository(getDb);
   const salesRepository = new SalesSqliteRepository(getDb, outboxRepository);
   const saleService = new SaleService(salesRepository);
-  registerSalesIpc(saleService);
-  registerSyncIpc(getDb, setLastSyncAuth);
+  registerSalesIpc(saleService, busyTracker);
+  registerSyncIpc(getDb, setLastSyncAuth, busyTracker);
   const productsRepository = new ProductsSqliteRepository(getDb, outboxRepository);
   const productService = new ProductService(productsRepository);
-  registerProductsIpc(productService);
+  registerProductsIpc(productService, busyTracker);
   const promotionsRepository = new PromotionsSqliteRepository(getDb, outboxRepository);
   const promotionService = new PromotionService(promotionsRepository);
-  registerPromotionsIpc(promotionService);
+  registerPromotionsIpc(promotionService, busyTracker);
   const providerPurchasesRepository = new ProviderPurchasesSqliteRepository(getDb, outboxRepository);
   const providerPurchaseService = new ProviderPurchaseService(providerPurchasesRepository);
-  registerProviderPurchasesIpc(providerPurchaseService);
+  registerProviderPurchasesIpc(providerPurchaseService, busyTracker);
   const reportsRepository = new ReportsSqliteRepository(getDb);
   const reportService = new ReportService(reportsRepository);
   registerReportsIpc(reportService);
   const supportRepository = new SupportSqliteRepository(getDb);
   const supportService = new SupportService(supportRepository);
-  registerSupportIpc(supportService);
+  registerSupportIpc(supportService, busyTracker);
 
   // -------------------------------------------------------------------
   // Connectivity-change listener: trigger whole-outbox sync on reconnect
@@ -207,6 +211,7 @@ function initDatabase(
 }
 
 function shutdownDatabase(): void {
+  unregisterUpdaterIpc();
   unregisterSyncIpc();
   unregisterSupportIpc();
   unregisterReportsIpc();
@@ -300,7 +305,12 @@ async function createWindow(): Promise<void> {
 
   const encodedConfig = encodeDesktopConfig(rendererConfig);
   const window = createBrowserWindow(encodedConfig);
-  registerUpdaterIpc(rendererConfig, window.webContents);
+
+  window.webContents.on("destroyed", () => {
+    busyTracker.clearTokensForRendererView(window.webContents.id);
+    unregisterUpdaterIpc();
+  });
+  registerUpdaterIpc(rendererConfig, window.webContents, busyTracker);
   const rendererUrl = app.isPackaged
     ? (await startPackagedNextServer()).url
     : config.frontendDevUrl;

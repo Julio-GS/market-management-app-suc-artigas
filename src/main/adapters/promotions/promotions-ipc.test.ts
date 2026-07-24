@@ -84,7 +84,7 @@ describe("promotions-ipc (new adapter)", () => {
 
       const handler = await getHandler(PROMOTIONS_CHANNELS.CREATE);
       const input = { name: "Summer Sale", type: "percentage", discount_percent: 15 };
-      const result = handler({}, input) as { success: boolean; promotion?: { name: string } };
+      const result = await handler({}, input) as { success: boolean; promotion?: { name: string } };
 
       expect(result.success).toBe(true);
       expect(result.promotion?.name).toBe("Summer Sale");
@@ -97,7 +97,7 @@ describe("promotions-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROMOTIONS_CHANNELS.CREATE);
-      const result = handler({}, { name: "Fail", type: "percentage" }) as { success: boolean; error?: string; errorCode?: string };
+      const result = await handler({}, { name: "Fail", type: "percentage" }) as { success: boolean; error?: string; errorCode?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Offline auth required");
@@ -110,7 +110,7 @@ describe("promotions-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROMOTIONS_CHANNELS.CREATE);
-      const result = handler({}, { name: "Fail", type: "percentage" }) as { success: boolean; error?: string };
+      const result = await handler({}, { name: "Fail", type: "percentage" }) as { success: boolean; error?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Failed to create promotion");
@@ -136,7 +136,7 @@ describe("promotions-ipc (new adapter)", () => {
 
       const handler = await getHandler(PROMOTIONS_CHANNELS.UPDATE);
       const input = { name: "Updated Name", discount_percent: 25 };
-      const result = handler({}, "promo-1", input) as { success: boolean; promotion?: { name: string } };
+      const result = await handler({}, "promo-1", input) as { success: boolean; promotion?: { name: string } };
 
       expect(result.success).toBe(true);
       expect(result.promotion?.name).toBe("Updated Name");
@@ -149,7 +149,7 @@ describe("promotions-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROMOTIONS_CHANNELS.UPDATE);
-      const result = handler({}, "nonexistent", { name: "Nope" }) as { success: boolean; error?: string };
+      const result = await handler({}, "nonexistent", { name: "Nope" }) as { success: boolean; error?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Promotion not found");
@@ -161,7 +161,7 @@ describe("promotions-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROMOTIONS_CHANNELS.UPDATE);
-      const result = handler({}, "x", {}) as { success: boolean; error?: string };
+      const result = await handler({}, "x", {}) as { success: boolean; error?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Failed to update promotion");
@@ -177,7 +177,7 @@ describe("promotions-ipc (new adapter)", () => {
       (repo.delete as ReturnType<typeof vi.fn>).mockReturnValue({ success: true });
 
       const handler = await getHandler(PROMOTIONS_CHANNELS.DELETE);
-      const result = handler({}, "promo-1") as { success: boolean };
+      const result = await handler({}, "promo-1") as { success: boolean };
 
       expect(result.success).toBe(true);
       expect(repo.delete).toHaveBeenCalledWith("promo-1");
@@ -189,7 +189,7 @@ describe("promotions-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROMOTIONS_CHANNELS.DELETE);
-      const result = handler({}, "nonexistent") as { success: boolean; error?: string };
+      const result = await handler({}, "nonexistent") as { success: boolean; error?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Promotion not found");
@@ -201,7 +201,7 @@ describe("promotions-ipc (new adapter)", () => {
       });
 
       const handler = await getHandler(PROMOTIONS_CHANNELS.DELETE);
-      const result = handler({}, "x") as { success: boolean; error?: string };
+      const result = await handler({}, "x") as { success: boolean; error?: string };
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Failed to delete promotion");

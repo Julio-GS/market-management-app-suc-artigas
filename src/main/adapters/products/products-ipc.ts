@@ -15,6 +15,7 @@ import type {
   OfflineProductResult,
 } from "../../domain/products/product";
 import { sanitizeProductCodes } from "../../domain/products/product";
+import type { BusyTracker } from "../../busy-state";
 
 // Re-export for preload consumers
 export type { OfflineProductInput, OfflineProductUpdateInput, OfflineProductResult };
@@ -212,10 +213,12 @@ export const PRODUCTS_CHANNELS = {
 // Handler registration
 // ---------------------------------------------------------------------------
 
-export function registerProductsIpc(productService: ProductService): void {
-  ipcMain.handle(
-    PRODUCTS_CHANNELS.CREATE,
-    (_event, input: unknown): OfflineProductResult => {
+export function registerProductsIpc(
+  productService: ProductService,
+  busyTracker?: BusyTracker,
+): void {
+  ipcMain.handle(PRODUCTS_CHANNELS.CREATE, (_event, input: unknown) => {
+    const run = async () => {
       const validated = validateProductCreateInput(input);
       if (!validated.valid) {
         return { success: false, error: validated.error, errorCode: "INVALID_INPUT" };
@@ -230,12 +233,13 @@ export function registerProductsIpc(productService: ProductService): void {
         const message = err instanceof Error ? err.message : "Failed to create product";
         return { success: false, error: message };
       }
-    },
-  );
+    };
 
-  ipcMain.handle(
-    PRODUCTS_CHANNELS.UPDATE,
-    (_event, productId: string, input: unknown): OfflineProductResult => {
+    return busyTracker?.runProtectedOperation("write", "Create product", run) ?? run();
+  });
+
+  ipcMain.handle(PRODUCTS_CHANNELS.UPDATE, (_event, productId: string, input: unknown) => {
+    const run = async () => {
       const validated = validateProductUpdateInput(input);
       if (!validated.valid) {
         return { success: false, error: validated.error, errorCode: "INVALID_INPUT" };
@@ -250,12 +254,13 @@ export function registerProductsIpc(productService: ProductService): void {
         const message = err instanceof Error ? err.message : "Failed to update product";
         return { success: false, error: message };
       }
-    },
-  );
+    };
 
-  ipcMain.handle(
-    PRODUCTS_CHANNELS.DELETE,
-    (_event, productId: string): OfflineProductResult => {
+    return busyTracker?.runProtectedOperation("write", "Update product", run) ?? run();
+  });
+
+  ipcMain.handle(PRODUCTS_CHANNELS.DELETE, (_event, productId: string) => {
+    const run = async () => {
       try {
         return productService.deleteProduct(productId);
       } catch (err) {
@@ -265,53 +270,46 @@ export function registerProductsIpc(productService: ProductService): void {
         const message = err instanceof Error ? err.message : "Failed to delete product";
         return { success: false, error: message };
       }
-    },
-  );
+    };
 
-  ipcMain.handle(
-    PRODUCTS_CHANNELS.LIST,
-    (_event, filters?: unknown): OfflineProductResult[] => {
-      const validated = validateProductSearchFilters(filters);
-      if (!validated.valid) {
-        return [{ success: false, error: validated.error, errorCode: "INVALID_INPUT" }];
-      }
+    return busyTracker?.runProtectedOperation("write", "Delete product", run) ?? run();
+  });
 
-      try {
-        return productService.listProducts(validated.data);
-      } catch (err) {
-        return [{ success: false, error: err instanceof Error ? err.message : "Failed to list products" }];
-      }
-    },
-  );
+  ipcMain.handle(PRODUCTS_CHANNELS.LIST, (_event, filters?: unknown): OfflineProductResult[] => {
+    const validated = validateProductSearchFilters(filters);
+    if (!validated.valid) {
+      return [{ success: false, error: validated.error, errorCode: "INVALID_INPUT" }];
+    }
 
-  ipcMain.handle(
-    PRODUCTS_CHANNELS.FIND_BY_CODE,
-    (_event, code: unknown): OfflineProductResult => {
-      const validated = validateProductCodeLookup(code);
-      if (!validated.valid) {
-        return { success: false, error: validated.error, errorCode: "INVALID_INPUT" };
-      }
+    try {
+      return productService.listProducts(validated.data);
+    } catch (err) {
+      return [{ success: false, error: err instanceof Error ? err.message : "Failed to list products" }];
+    }
+  });
 
-      try {
-        return productService.findProductByCode(validated.data);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to find product by code";
-        return { success: false, error: message };
-      }
-    },
-  );
+  ipcMain.handle(PRODUCTS_CHANNELS.FIND_BY_CODE, (_event, code: unknown) => {
+    const validated = validateProductCodeLookup(code);
+    if (!validated.valid) {
+      return { success: false, error: validated.error, errorCode: "INVALID_INPUT" };
+    }
 
-  ipcMain.handle(
-    PRODUCTS_CHANNELS.GET,
-    (_event, productId: string): OfflineProductResult => {
-      try {
-        return productService.getProduct(productId);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to get product";
-        return { success: false, error: message };
-      }
-    },
-  );
+    try {
+      return productService.findProductByCode(validated.data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to find product by code";
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle(PRODUCTS_CHANNELS.GET, (_event, productId: string) => {
+    try {
+      return productService.getProduct(productId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to get product";
+      return { success: false, error: message };
+    }
+  });
 }
 
 export function unregisterProductsIpc(): void {
