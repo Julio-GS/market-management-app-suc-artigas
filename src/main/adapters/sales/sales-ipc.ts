@@ -7,10 +7,13 @@
 // ---------------------------------------------------------------------------
 
 import { ipcMain } from "electron";
+import { SALES_CHANNELS } from "../../../shared/ipc-channels";
 import { FiscalBlockedError } from "../../domain/sales/sale";
 import { OfflineAuthRequiredError } from "../../offline-auth";
 import { type SaleService } from "../../application/sales/sale-service";
 import type { BusyTracker } from "../../busy-state";
+
+export { SALES_CHANNELS };
 
 // Re-export for preload consumers
 export type { OfflineSaleInput, ListedSale } from "../../domain/sales/sale";
@@ -78,16 +81,6 @@ export function validateSaleInput(
     data: input as import("../../domain/sales/sale").OfflineSaleInput,
   };
 }
-
-// ---------------------------------------------------------------------------
-// IPC channel constants
-// ---------------------------------------------------------------------------
-
-export const SALES_CHANNELS = {
-  COMPLETE_SALE: "offline:sales:complete",
-  GET_SALE: "offline:sales:get",
-  LIST_SALES: "offline:sales:list",
-} as const;
 
 // ---------------------------------------------------------------------------
 // Result types exposed to the renderer

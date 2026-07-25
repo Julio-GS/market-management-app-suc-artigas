@@ -1,17 +1,12 @@
 import { ipcMain, type WebContents } from "electron";
 import { autoUpdater } from "electron-updater";
 import log from "electron-log";
-import type { DesktopConfig } from "./config";
+import type { DesktopConfig } from "../shared/desktop-config";
+import { UPDATE_CHANNELS } from "../shared/ipc-channels";
 import { getUpdateStatus, type UpdateStatus } from "./updater-status";
 import type { BusyTracker } from "./busy-state";
 
-export const UPDATE_CHANNELS = {
-  GET_STATUS: "updates:get-status",
-  CHECK: "updates:check",
-  DOWNLOAD: "updates:download",
-  INSTALL_AND_RESTART: "updates:install-and-restart",
-  STATUS: "updates:status"
-} as const;
+export { UPDATE_CHANNELS };
 
 /** Payload passed to the optional updater error reporter. */
 export interface UpdaterErrorReport {

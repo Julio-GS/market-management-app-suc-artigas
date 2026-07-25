@@ -8,6 +8,7 @@
 
 import { ipcMain } from "electron";
 import type Database from "better-sqlite3";
+import { SYNC_CHANNELS } from "../../../shared/ipc-channels";
 import {
   getOutboxStatusCounts,
   isRevalidationRequired,
@@ -24,15 +25,7 @@ import {
 } from "../../pull-reconciliation";
 import type { BusyTracker } from "../../busy-state";
 
-// ---------------------------------------------------------------------------
-// IPC channel constants
-// ---------------------------------------------------------------------------
-
-export const SYNC_CHANNELS = {
-  START_SYNC: "sync:start",
-  GET_SYNC_STATE: "sync:get-state",
-  PULL: "sync:pull",
-} as const;
+export { SYNC_CHANNELS };
 
 export interface SyncStatePayload {
   pendingCount: number;

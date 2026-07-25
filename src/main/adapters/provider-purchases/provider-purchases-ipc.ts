@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { ipcMain } from "electron";
+import { PROVIDER_PURCHASES_CHANNELS } from "../../../shared/ipc-channels";
 import type { ProviderPurchaseService } from "../../application/provider-purchases/provider-purchase-service";
 import type {
   OfflineProviderPurchaseInput,
@@ -17,19 +18,10 @@ import type {
 } from "../../domain/provider-purchases/provider-purchase";
 import type { BusyTracker } from "../../busy-state";
 
+export { PROVIDER_PURCHASES_CHANNELS };
+
 // Re-export for preload consumers
 export type { OfflineProviderPurchaseInput, OfflineProviderPurchaseUpdateInput, OfflineProviderPurchaseResult };
-
-// ---------------------------------------------------------------------------
-// IPC channel constants
-// ---------------------------------------------------------------------------
-
-export const PROVIDER_PURCHASES_CHANNELS = {
-  CREATE: "offline:provider-purchases:create",
-  UPDATE: "offline:provider-purchases:update",
-  LIST: "offline:provider-purchases:list",
-  DELETE: "offline:provider-purchases:delete",
-} as const;
 
 // ---------------------------------------------------------------------------
 // Handler registration

@@ -19,7 +19,7 @@
     "dev": "pnpm build:desktop && pnpm rebuild:electron && electron .",
     "package": "pnpm build:desktop && pnpm prepare:frontend && electron-builder --publish never",
     "package:dir": "pnpm build:desktop && pnpm prepare:frontend && electron-builder --dir --publish never",
-    "publish:github": "node scripts/require-gh-token.mjs && pnpm build:desktop && pnpm prepare:frontend && electron-builder --publish always"
+    "publish:github": "node scripts/require-gh-token.mjs && pnpm clean && pnpm build:desktop && pnpm prepare:frontend && electron-builder --publish always"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
