@@ -27,6 +27,7 @@ export interface UpdaterErrorReport {
 export type UpdaterErrorReporter = (report: UpdaterErrorReport) => void;
 
 let updaterErrorReporter: UpdaterErrorReporter | undefined;
+let hasTriggeredStartupUpdateCheck = false;
 
 /**
  * Register an optional error reporter for production observability.
@@ -110,6 +111,18 @@ export function configureAutoUpdater(config: DesktopConfig): UpdateStatus {
 
       autoUpdater.allowDowngrade = config.updates.allowDowngrade ?? false;
   return status;
+}
+
+export function checkForUpdatesOnStartup(status: UpdateStatus): void {
+  if (!status.enabled || hasTriggeredStartupUpdateCheck) {
+    return;
+  }
+
+  hasTriggeredStartupUpdateCheck = true;
+
+  void autoUpdater.checkForUpdates().catch((error) => {
+    log.warn("Startup update check failed", error);
+  });
 }
 
 export function unregisterUpdaterIpc(): void {

@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { encodeDesktopConfig, resolveDesktopConfig } from "./config";
 import { isAllowedPermission, isAllowedRendererNavigation, shouldOpenExternally } from "./navigation";
 import { startPackagedNextServer, stopPackagedNextServer } from "./next-server";
-import { registerUpdaterIpc, unregisterUpdaterIpc } from "./updater";
+import { checkForUpdatesOnStartup, registerUpdaterIpc, unregisterUpdaterIpc } from "./updater";
 import { createBusyTracker } from "./busy-state";
 import { getUpdateStatus } from "./updater-status";
 import { getDatabasePath, openDatabase, runMigrations, closeDatabase } from "./db";
@@ -310,7 +310,11 @@ async function createWindow(): Promise<void> {
     busyTracker.clearTokensForRendererView(window.webContents.id);
     unregisterUpdaterIpc();
   });
-  registerUpdaterIpc(rendererConfig, window.webContents, busyTracker);
+  const updaterStatus = registerUpdaterIpc(rendererConfig, window.webContents, busyTracker);
+  if (app.isPackaged) {
+    checkForUpdatesOnStartup(updaterStatus);
+  }
+
   const rendererUrl = app.isPackaged
     ? (await startPackagedNextServer()).url
     : config.frontendDevUrl;
