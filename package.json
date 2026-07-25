@@ -9,7 +9,8 @@
     "clean": "rimraf dist release build/frontend",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
-    "build:desktop": "tsc -p tsconfig.build.json",
+    "build:preload": "node scripts/build-preload.mjs",
+    "build:desktop": "tsc -p tsconfig.build.json && pnpm build:preload",
     "build:frontend": "pnpm --dir ../frontend-management-market/supermarket-management-frontend build",
     "copy:frontend": "node scripts/copy-frontend.mjs",
     "prepare:frontend": "pnpm build:frontend && pnpm copy:frontend",
@@ -32,6 +33,7 @@
     "@types/node": "^22.10.0",
     "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
+    "esbuild": "^0.28.1",
     "rimraf": "^6.0.1",
     "typescript": "^5.7.2",
     "vitest": "^3.0.0"
