@@ -6,22 +6,15 @@
 // ---------------------------------------------------------------------------
 
 import { ipcMain } from "electron";
+import { BOOTSTRAP_CHANNELS } from "../../../shared/ipc-channels";
 import type { BootstrapService } from "../../application/bootstrap/bootstrap-service";
 import type { BootstrapResult } from "../../domain/bootstrap/bootstrap";
 import type { BusyTracker } from "../../busy-state";
 
+export { BOOTSTRAP_CHANNELS };
+
 // Re-export for preload consumers
 export type { BootstrapResult } from "../../domain/bootstrap/bootstrap";
-
-// ---------------------------------------------------------------------------
-// IPC channel constants (byte-identical to legacy)
-// ---------------------------------------------------------------------------
-
-export const BOOTSTRAP_CHANNELS = {
-  BOOTSTRAP_STATUS: "offline:bootstrap:status",
-  BOOTSTRAP_START: "offline:bootstrap:start",
-  BOOTSTRAP_RESUME: "offline:bootstrap:resume",
-} as const;
 
 // ---------------------------------------------------------------------------
 // Handler registration

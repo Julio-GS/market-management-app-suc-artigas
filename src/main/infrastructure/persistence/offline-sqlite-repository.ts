@@ -18,7 +18,7 @@ import type {
 } from "../../domain/offline/offline";
 import { toOfflineSessionIpcResult } from "../../domain/offline/offline";
 import { getOfflineState, INITIAL_OFFLINE_STATE } from "../../offline-state";
-import { getConnectivityState } from "../../connectivity-state";
+import { getConnectivityState, setConnectivityState } from "../../connectivity-state";
 import {
   getOfflineSession,
   verifyOfflineCredentials,
@@ -102,6 +102,7 @@ export class OfflineSqliteRepository implements IOfflineRepository {
           // Persist credentials so future offline logins work
           const hash = hashPassword(params.password);
           upsertOfflineSession(db, userId, params.username, hash);
+          setConnectivityState("online");
 
           return {
             success: true,
@@ -133,6 +134,7 @@ export class OfflineSqliteRepository implements IOfflineRepository {
         if (!isNetworkError) {
           throw networkErr;
         }
+        setConnectivityState("offline");
         // Fall through to offline verification below
       }
 

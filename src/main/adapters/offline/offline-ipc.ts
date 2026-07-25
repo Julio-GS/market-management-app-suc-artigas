@@ -7,7 +7,10 @@
 // ---------------------------------------------------------------------------
 
 import { ipcMain } from "electron";
+import { OFFLINE_CHANNELS } from "../../../shared/ipc-channels";
 import type { OfflineService } from "../../application/offline/offline-service";
+
+export { OFFLINE_CHANNELS };
 
 // Re-export for preload consumers (types + pure helper)
 export type {
@@ -16,16 +19,6 @@ export type {
   OfflineSessionIpcResult,
 } from "../../domain/offline/offline";
 export { toOfflineSessionIpcResult } from "../../domain/offline/offline";
-
-// ---------------------------------------------------------------------------
-// IPC channel constants
-// ---------------------------------------------------------------------------
-
-export const OFFLINE_CHANNELS = {
-  GET_STATE: "offline:get-state",
-  GET_SESSION: "offline:get-session",
-  LOGIN: "offline:login",
-} as const;
 
 // ---------------------------------------------------------------------------
 // Handler registration

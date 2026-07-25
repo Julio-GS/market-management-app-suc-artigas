@@ -8,6 +8,7 @@
 
 import { ipcMain } from "electron";
 import type Database from "better-sqlite3";
+import { SYNC_CHANNELS } from "../../../shared/ipc-channels";
 import {
   getOutboxStatusCounts,
   isRevalidationRequired,
@@ -23,16 +24,9 @@ import {
   type PullResponse,
 } from "../../pull-reconciliation";
 import type { BusyTracker } from "../../busy-state";
+import { setConnectivityState } from "../../connectivity-state";
 
-// ---------------------------------------------------------------------------
-// IPC channel constants
-// ---------------------------------------------------------------------------
-
-export const SYNC_CHANNELS = {
-  START_SYNC: "sync:start",
-  GET_SYNC_STATE: "sync:get-state",
-  PULL: "sync:pull",
-} as const;
+export { SYNC_CHANNELS };
 
 export interface SyncStatePayload {
   pendingCount: number;
@@ -62,18 +56,27 @@ function createBackendPullFn(
     if (cursor) params.set("cursor", cursor);
 
     const fetchUrl = `${url}?${params.toString()}`;
-    const response = await fetch(fetchUrl, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    });
 
-    if (!response.ok) {
-      throw new Error(`Pull request failed: ${response.status} ${response.statusText}`);
+    try {
+      const response = await fetch(fetchUrl, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        const details = await readResponseDetails(response);
+        setConnectivityState("offline");
+        throw new Error(buildBackendErrorMessage("Pull request failed", response, details));
+      }
+
+      setConnectivityState("online");
+      return (await response.json()) as PullResponse;
+    } catch (error) {
+      setConnectivityState("offline");
+      throw wrapFetchError("Pull request failed", error);
     }
-
-    return (await response.json()) as PullResponse;
   };
 }
 
@@ -88,32 +91,40 @@ export function createBackendPushFn(
   const base = apiBaseUrl.replace(/\/+$/, "");
 
   return async (entries) => {
-    const response = await fetch(`${base}/sync/push`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        entries: entries.map((e) => ({
-          id: e.id,
-          idempotency_key: e.idempotency_key,
-          operation_type: e.operation_type,
-          aggregate_type: e.aggregate_type,
-          aggregate_id: e.aggregate_id,
-          payload: JSON.parse(e.payload),
-          base_server_version: e.base_server_version,
-          actor_user_id: e.actor_user_id,
-          created_at: e.created_at,
-        })),
-      }),
-    });
+    try {
+      const response = await fetch(`${base}/sync/push`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          entries: entries.map((e) => ({
+            id: e.id,
+            idempotency_key: e.idempotency_key,
+            operation_type: e.operation_type,
+            aggregate_type: e.aggregate_type,
+            aggregate_id: e.aggregate_id,
+            payload: JSON.parse(e.payload),
+            base_server_version: e.base_server_version,
+            actor_user_id: e.actor_user_id,
+            created_at: e.created_at,
+          })),
+        }),
+      });
 
-    if (!response.ok) {
-      throw new Error(`Push request failed: ${response.status} ${response.statusText}`);
+      if (!response.ok) {
+        const details = await readResponseDetails(response);
+        setConnectivityState("offline");
+        throw new Error(buildBackendErrorMessage("Push request failed", response, details));
+      }
+
+      setConnectivityState("online");
+      return (await response.json()) as SyncPushResponse;
+    } catch (error) {
+      setConnectivityState("offline");
+      throw wrapFetchError("Push request failed", error);
     }
-
-    return (await response.json()) as SyncPushResponse;
   };
 }
 
@@ -124,30 +135,68 @@ function createBackendRevalidateFn(
   const base = apiBaseUrl.replace(/\/+$/, "");
 
   return async (userId) => {
-    const response = await fetch(`${base}/auth/revalidate`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ user_id: userId }),
-    });
+    try {
+      const response = await fetch(`${base}/auth/revalidate`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ user_id: userId }),
+      });
 
-    if (!response.ok) {
+      if (!response.ok) {
+        const details = await readResponseDetails(response);
+        return {
+          valid: false,
+          user_id: userId,
+          reason: buildBackendErrorMessage("Revalidation failed", response, details),
+        };
+      }
+
+      setConnectivityState("online");
+      return (await response.json()) as {
+        valid: boolean;
+        user_id: string;
+        username?: string;
+        reason?: string;
+      };
+    } catch (error) {
+      setConnectivityState("offline");
       return {
         valid: false,
         user_id: userId,
-        reason: `Revalidation failed: ${response.status}`,
+        reason: wrapFetchError("Revalidation failed", error).message,
       };
     }
-
-    return (await response.json()) as {
-      valid: boolean;
-      user_id: string;
-      username?: string;
-      reason?: string;
-    };
   };
+}
+
+async function readResponseDetails(response: Response): Promise<string | null> {
+  const body = await response.text();
+  const trimmed = body.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function buildBackendErrorMessage(
+  prefix: string,
+  response: Response,
+  details?: string | null,
+): string {
+  const statusText = response.statusText ? ` ${response.statusText}` : "";
+  return details
+    ? `${prefix}: ${response.status}${statusText} - ${details}`
+    : `${prefix}: ${response.status}${statusText}`;
+}
+
+function wrapFetchError(prefix: string, error: unknown): Error {
+  if (error instanceof Error) {
+    if (error.message.startsWith(`${prefix}:`)) {
+      return error;
+    }
+    return new Error(`${prefix}: ${error.message}`);
+  }
+  return new Error(`${prefix}: Unknown error`);
 }
 
 // ---------------------------------------------------------------------------

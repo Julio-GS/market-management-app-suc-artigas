@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { ipcMain } from "electron";
+import { REPORTS_CHANNELS } from "../../../shared/ipc-channels";
 import type { ReportService } from "../../application/reports/report-service";
 import type {
   OfflineRecentSale,
@@ -17,18 +18,10 @@ import type {
   OfflineStalenessInfo,
 } from "../../domain/reports/report";
 
+export { REPORTS_CHANNELS };
+
 // Re-export for preload consumers
 export type { OfflineRecentSale, OfflineReportResult, OfflineSalesSummary, OfflineStalenessInfo };
-
-// ---------------------------------------------------------------------------
-// IPC channel constants
-// ---------------------------------------------------------------------------
-
-export const REPORTS_CHANNELS = {
-  GET_SALES_SUMMARY: "offline:reports:sales-summary",
-  GET_RECENT_SALES: "offline:reports:recent-sales",
-  GET_STALENESS: "offline:reports:staleness",
-} as const;
 
 // ---------------------------------------------------------------------------
 // Handler registration
