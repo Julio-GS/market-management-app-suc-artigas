@@ -23,6 +23,42 @@ import {
   type StockMovementResult,
 } from "../../domain/sales/sale";
 
+export interface DetailedSaleItemRecord {
+  productId: string;
+  name: string;
+  description?: string;
+  quantity: number;
+  unitPrice: string;
+  subtotal: string;
+  discountAmount: string;
+  appliedPromotions: [];
+  appliedPromotionId: string | null;
+  appliedPromotionType: string | null;
+}
+
+export interface DetailedSalePaymentRecord {
+  method: string;
+  amount: string;
+}
+
+export interface DetailedSaleRecord {
+  id: string;
+  total: string;
+  customer: string;
+  invoiceStatus: string;
+  createdAt: string;
+  updatedAt: string;
+  items: DetailedSaleItemRecord[];
+  paymentMethods: DetailedSalePaymentRecord[];
+  splitTicketGroups: null;
+  cae: null;
+  caeVto: null;
+  cbteNro: null;
+  cbteTipo: null;
+  ptoVta: null;
+  invoiceRequestedAt: null;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers preserved from the previous Sales persistence implementation.
 // ---------------------------------------------------------------------------
@@ -367,6 +403,50 @@ export class SalesSqliteRepository implements ISalesRepository {
     }));
   }
 
+  getDetailedSaleById(saleId: string): DetailedSaleRecord | undefined {
+    const db = this.getDb();
+
+    const sale = db.prepare(`
+      SELECT id, total, customer, invoice_status, created_at, updated_at
+      FROM sales WHERE id = ?
+    `).get(saleId) as {
+      id: string;
+      total: string;
+      customer: string;
+      invoice_status: string;
+      created_at: string;
+      updated_at: string;
+    } | undefined;
+
+    if (!sale) {
+      return undefined;
+    }
+
+    return {
+      id: sale.id,
+      total: sale.total,
+      customer: sale.customer,
+      invoiceStatus: sale.invoice_status,
+      createdAt: sale.created_at,
+      updatedAt: sale.updated_at,
+      items: this.readSaleItems(db, sale.id),
+      paymentMethods: this.readSalePayments(db, sale.id),
+      splitTicketGroups: null,
+      cae: null,
+      caeVto: null,
+      cbteNro: null,
+      cbteTipo: null,
+      ptoVta: null,
+      invoiceRequestedAt: null,
+    };
+  }
+
+  listDetailedSales(): DetailedSaleRecord[] {
+    return this.listSales()
+      .map((sale) => this.getDetailedSaleById(sale.id))
+      .filter((sale): sale is DetailedSaleRecord => sale !== undefined);
+  }
+
   // -----------------------------------------------------------------------
   // Private helpers
   // -----------------------------------------------------------------------
@@ -375,6 +455,36 @@ export class SalesSqliteRepository implements ISalesRepository {
    * Read back the outbox row id for the sale_create entry that was just
    * inserted. This MUST run inside the same transaction as the insert.
    */
+  private readSaleItems(db: Database.Database, saleId: string): DetailedSaleItemRecord[] {
+    return db.prepare(`
+      SELECT
+        product_id AS productId,
+        name,
+        description,
+        quantity,
+        unit_price AS unitPrice,
+        subtotal,
+        discount_amount AS discountAmount,
+        applied_promotion_id AS appliedPromotionId,
+        applied_promotion_type AS appliedPromotionType
+      FROM sale_items
+      WHERE sale_id = ?
+      ORDER BY created_at ASC
+    `).all(saleId).map((item) => ({
+      ...(item as Omit<DetailedSaleItemRecord, "appliedPromotions">),
+      appliedPromotions: [],
+    })) as DetailedSaleItemRecord[];
+  }
+
+  private readSalePayments(db: Database.Database, saleId: string): DetailedSalePaymentRecord[] {
+    return db.prepare(`
+      SELECT method, amount
+      FROM sale_payments
+      WHERE sale_id = ?
+      ORDER BY created_at ASC
+    `).all(saleId) as DetailedSalePaymentRecord[];
+  }
+
   private readBackOutboxId(db: Database.Database, saleId: string): string {
     const row = db
       .prepare(

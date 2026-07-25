@@ -5,6 +5,7 @@ import {
   OFFLINE_CHANNELS,
   PRODUCTS_CHANNELS,
   PROMOTIONS_CHANNELS,
+  STOCK_CHANNELS,
   PROVIDER_PURCHASES_CHANNELS,
   REPORTS_CHANNELS,
   SALES_CHANNELS,
@@ -19,10 +20,10 @@ import type {
   OfflineSessionIpcResult,
 } from "../main/adapters/offline/offline-ipc";
 import type { BootstrapResult } from "../main/adapters/bootstrap/bootstrap-ipc";
-import type { ListedSale } from "../main/adapters/sales/sales-ipc";
+import type { DetailedListedSale, OfflineSaleIpcResult } from "../main/adapters/sales/sales-ipc";
 import type { OutboxListItem, OutboxRetryResult } from "../main/adapters/support/support-ipc";
 import type { OfflineState } from "../main/offline-state";
-import type { OfflineSaleInput, OfflineSaleIpcResult } from "../main/adapters/sales/sales-ipc";
+import type { OfflineSaleInput } from "../main/adapters/sales/sales-ipc";
 import type { SyncStatePayload } from "../main/adapters/sync/sync-ipc";
 import type { PullResult } from "../main/pull-reconciliation";
 import type { ReplayResult } from "../main/sync-engine";
@@ -33,6 +34,7 @@ import type {
   OfflinePromotionResult,
 } from "../main/adapters/promotions/promotions-ipc";
 import type { OfflineProviderPurchaseInput, OfflineProviderPurchaseUpdateInput, OfflineProviderPurchaseResult } from "../main/adapters/provider-purchases/provider-purchases-ipc";
+import type { OfflineStockAdjustmentResult, OfflineStockMovement } from "../main/adapters/stock/stock-ipc";
 
 interface MarketDesktopBridge {
   getConfig(): DesktopConfig;
@@ -57,7 +59,11 @@ interface MarketDesktopBridge {
   sales: {
     complete(input: OfflineSaleInput): Promise<OfflineSaleIpcResult>;
     get(saleId: string): Promise<OfflineSaleIpcResult>;
-        list(): Promise<ListedSale[]>;
+    list(): Promise<DetailedListedSale[]>;
+  };
+  stock: {
+    get(productId: string): Promise<number | null>;
+    adjust(input: { productId: string; quantity: number; reason?: string }): Promise<OfflineStockMovement>;
   };
   sync: {
     getState(): Promise<SyncStatePayload>;
@@ -143,7 +149,17 @@ const marketDesktop: MarketDesktopBridge = {
   sales: {
     complete: (input) => ipcRenderer.invoke(SALES_CHANNELS.COMPLETE_SALE, input) as Promise<OfflineSaleIpcResult>,
     get: (saleId) => ipcRenderer.invoke(SALES_CHANNELS.GET_SALE, saleId) as Promise<OfflineSaleIpcResult>,
-        list: () => ipcRenderer.invoke(SALES_CHANNELS.LIST_SALES) as Promise<ListedSale[]>,
+    list: () => ipcRenderer.invoke(SALES_CHANNELS.LIST_SALES) as Promise<DetailedListedSale[]>,
+  },
+  stock: {
+    get: (productId) => ipcRenderer.invoke(STOCK_CHANNELS.GET, productId) as Promise<number | null>,
+    adjust: async (input) => {
+      const result = await ipcRenderer.invoke(STOCK_CHANNELS.ADJUST, input) as OfflineStockAdjustmentResult
+      if (!result.success || !result.movement) {
+        throw new Error(result.error ?? "Stock adjustment failed")
+      }
+      return result.movement
+    },
   },
   sync: {
     getState: () => ipcRenderer.invoke(SYNC_CHANNELS.GET_SYNC_STATE) as Promise<SyncStatePayload>,

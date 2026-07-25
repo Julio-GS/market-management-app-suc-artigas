@@ -214,6 +214,29 @@ describe("BootstrapSqliteRepository", () => {
       globalThis.fetch = originalFetch;
     });
 
+    it("clears stale promotions when the authoritative snapshot has none", async () => {
+      db.prepare(`
+        INSERT INTO promotions
+          (id, name, description, scope, product_id, type, discount_percent, start_date, end_date, weekdays, enabled, created_at, updated_at)
+        VALUES
+          ('stale-promo', 'Old promo', NULL, 'store', NULL, 'percentage', 5, NULL, NULL, NULL, 1, '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000Z')
+      `).run();
+
+      const snapshot = makeSnapshot({ promotions: [] });
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(snapshot),
+      });
+
+      await repo.start("test-token", MOCK_BACKEND_URL);
+
+      const promotions = db.prepare("SELECT * FROM promotions").all();
+      expect(promotions).toHaveLength(0);
+
+      globalThis.fetch = originalFetch;
+    });
+
     it("persists provider purchases into the local store", async () => {
       const snapshot = makeSnapshot({
         provider_purchases: [

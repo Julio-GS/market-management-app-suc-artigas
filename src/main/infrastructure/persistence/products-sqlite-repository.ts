@@ -41,6 +41,7 @@ interface OfflineProductRow {
   codigos: string;
   pricing_mode: string;
   is_protected: number;
+  stock_actual: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -74,6 +75,7 @@ function mapRow(row: OfflineProductRow): OfflineProductResult["product"] {
     manejaStock: row.maneja_stock === 1,
     codigos: JSON.parse(row.codigos || "[]"),
     pricingMode: row.pricing_mode,
+    stock: row.stock_actual,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -153,7 +155,7 @@ export class ProductsSqliteRepository implements IProductsRepository {
 
     run();
 
-    const row = db.prepare("SELECT * FROM products WHERE id = ?").get(productId) as OfflineProductRow | undefined;
+    const row = db.prepare(this.baseSelectSql("WHERE p.id = ?")).get(productId) as OfflineProductRow | undefined;
     if (!row) {
       return { success: false, error: "Product not found after creation" };
     }
@@ -170,7 +172,7 @@ export class ProductsSqliteRepository implements IProductsRepository {
     const actorUserId = getActorUserId(db);
     const sanitizedCodigos = input.codigos !== undefined ? sanitizeProductCodes(input.codigos) : undefined;
 
-    const existing = db.prepare("SELECT * FROM products WHERE id = ?").get(productId) as OfflineProductRow | undefined;
+    const existing = db.prepare(this.baseSelectSql("WHERE p.id = ?")).get(productId) as OfflineProductRow | undefined;
     if (!existing) {
       return { success: false, error: "Product not found" };
     }
@@ -233,7 +235,7 @@ export class ProductsSqliteRepository implements IProductsRepository {
 
     run();
 
-    const row = db.prepare("SELECT * FROM products WHERE id = ?").get(productId) as OfflineProductRow | undefined;
+    const row = db.prepare(this.baseSelectSql("WHERE p.id = ?")).get(productId) as OfflineProductRow | undefined;
     if (!row) {
       return { success: false, error: "Product not found after update" };
     }
@@ -249,7 +251,7 @@ export class ProductsSqliteRepository implements IProductsRepository {
     const installationId = getInstallationId(db);
     const actorUserId = getActorUserId(db);
 
-    const existing = db.prepare("SELECT * FROM products WHERE id = ?").get(productId) as OfflineProductRow | undefined;
+    const existing = db.prepare(this.baseSelectSql("WHERE p.id = ?")).get(productId) as OfflineProductRow | undefined;
     if (!existing) {
       return { success: false, error: "Product not found" };
     }
@@ -289,7 +291,7 @@ export class ProductsSqliteRepository implements IProductsRepository {
 
   list(): OfflineProductResult[] {
     const db = this.getDb();
-    const rows = db.prepare("SELECT * FROM products ORDER BY detalle ASC").all() as OfflineProductRow[];
+    const rows = db.prepare(this.baseSelectSql("ORDER BY p.detalle ASC")).all() as OfflineProductRow[];
     return rows.map((row) => ({ success: true, product: mapRow(row) }));
   }
 
@@ -305,10 +307,9 @@ export class ProductsSqliteRepository implements IProductsRepository {
 
     const rows = db
       .prepare(
-        `SELECT * FROM products
-         WHERE LOWER(detalle) LIKE LOWER(?)
-            OR LOWER(codigos) LIKE LOWER(?)
-         ORDER BY detalle ASC`,
+        this.baseSelectSql(`WHERE LOWER(p.detalle) LIKE LOWER(?)
+            OR LOWER(p.codigos) LIKE LOWER(?)
+         ORDER BY p.detalle ASC`),
       )
       .all(likePattern, likePattern) as OfflineProductRow[];
 
@@ -326,9 +327,8 @@ export class ProductsSqliteRepository implements IProductsRepository {
 
     const row = db
       .prepare(
-        `SELECT * FROM products
-         WHERE codigos LIKE ?
-         LIMIT 1`,
+        this.baseSelectSql(`WHERE p.codigos LIKE ?
+         LIMIT 1`),
       )
       .get(likePattern) as OfflineProductRow | undefined;
 
@@ -341,10 +341,33 @@ export class ProductsSqliteRepository implements IProductsRepository {
 
   get(productId: string): OfflineProductResult {
     const db = this.getDb();
-    const row = db.prepare("SELECT * FROM products WHERE id = ?").get(productId) as OfflineProductRow | undefined;
+    const row = db.prepare(this.baseSelectSql("WHERE p.id = ?")).get(productId) as OfflineProductRow | undefined;
     if (!row) {
       return { success: false, error: "Product not found" };
     }
     return { success: true, product: mapRow(row) };
+  }
+
+  private baseSelectSql(suffix = ""): string {
+    return `SELECT
+      p.id,
+      p.detalle,
+      p.costo_neto,
+      p.costo_final,
+      p.iva,
+      p.cambio_costo,
+      p.cambio_precio,
+      p.etiqueta,
+      p.facturable,
+      p.maneja_stock,
+      p.codigos,
+      p.pricing_mode,
+      p.is_protected,
+      sb.stock_actual,
+      p.created_at,
+      p.updated_at
+    FROM products p
+    LEFT JOIN stock_balances sb ON sb.product_id = p.id
+    ${suffix}`;
   }
 }

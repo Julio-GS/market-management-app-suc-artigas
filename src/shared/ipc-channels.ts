@@ -39,6 +39,11 @@ export const PRODUCTS_CHANNELS = {
   FIND_BY_CODE: "offline:products:findByCode",
 } as const;
 
+export const STOCK_CHANNELS = {
+  GET: "offline:stock:get",
+  ADJUST: "offline:stock:adjust",
+} as const;
+
 export const PROMOTIONS_CHANNELS = {
   CREATE: "offline:promotions:create",
   UPDATE: "offline:promotions:update",

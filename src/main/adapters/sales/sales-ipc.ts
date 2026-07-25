@@ -3,33 +3,32 @@
 //
 // Owns channel constants, lightweight payload validation, Electron
 // registration/unregistration, result mapping, and legacy error codes.
-// Delegates all persistence work to SaleService.
+// Delegates write flow to SaleService and detailed read flow to the SQLite repo.
 // ---------------------------------------------------------------------------
 
 import { ipcMain } from "electron";
 import { SALES_CHANNELS } from "../../../shared/ipc-channels";
-import { FiscalBlockedError } from "../../domain/sales/sale";
+import { FiscalBlockedError, type OfflineSaleInput } from "../../domain/sales/sale";
 import { OfflineAuthRequiredError } from "../../offline-auth";
 import { type SaleService } from "../../application/sales/sale-service";
 import type { BusyTracker } from "../../busy-state";
+import type { DetailedSaleRecord, SalesSqliteRepository } from "../../infrastructure/persistence/sales-sqlite-repository";
 
 export { SALES_CHANNELS };
 
-// Re-export for preload consumers
-export type { OfflineSaleInput, ListedSale } from "../../domain/sales/sale";
+export type { OfflineSaleInput };
+export interface DetailedListedSale extends DetailedSaleRecord {
+  invoiceRequested: boolean;
+  syncStatus?: string | null;
+}
 
 // ---------------------------------------------------------------------------
 // Minimal runtime payload validation
 // ---------------------------------------------------------------------------
 
-/**
- * Validate the IPC payload shape before passing it to the local sale
- * transaction. This is a lightweight schema guard, not exhaustive business
- * validation — that lives in the repository.
- */
 export function validateSaleInput(
   input: unknown,
-): { valid: true; data: import("../../domain/sales/sale").OfflineSaleInput } | { valid: false; error: string } {
+): { valid: true; data: OfflineSaleInput } | { valid: false; error: string } {
   if (!input || typeof input !== "object") {
     return { valid: false, error: "Sale input must be an object" };
   }
@@ -42,11 +41,7 @@ export function validateSaleInput(
 
   for (let i = 0; i < data.items.length; i++) {
     const item = data.items[i] as Record<string, unknown> | undefined;
-    if (
-      !item ||
-      typeof item.productId !== "string" ||
-      item.productId.trim().length === 0
-    ) {
+    if (!item || typeof item.productId !== "string" || item.productId.trim().length === 0) {
       return { valid: false, error: `Item ${i + 1} must have a valid productId` };
     }
     if (typeof item.quantity !== "number" || item.quantity <= 0) {
@@ -78,7 +73,7 @@ export function validateSaleInput(
 
   return {
     valid: true,
-    data: input as import("../../domain/sales/sale").OfflineSaleInput,
+    data: input as OfflineSaleInput,
   };
 }
 
@@ -88,13 +83,7 @@ export function validateSaleInput(
 
 export interface OfflineSaleIpcResult {
   success: boolean;
-  sale?: {
-    id: string;
-    total: string;
-    customer: string;
-    invoiceStatus: string;
-    createdAt: string;
-  };
+  sale?: DetailedSaleRecord;
   warnings?: string[];
   error?: string;
   errorCode?: string;
@@ -104,12 +93,11 @@ export interface OfflineSaleIpcResult {
 // Handler registration
 // ---------------------------------------------------------------------------
 
-/**
- * Register all sales-related IPC handlers.
- * When `busyTracker` is provided, the sale-completion handler marks the app
- * busy during the database write so update installs are deferred safely.
- */
-export function registerSalesIpc(saleService: SaleService, busyTracker?: BusyTracker): void {
+export function registerSalesIpc(
+  saleService: SaleService,
+  salesRepository: SalesSqliteRepository,
+  busyTracker?: BusyTracker,
+): void {
   ipcMain.handle(
     SALES_CHANNELS.COMPLETE_SALE,
     async (_event, input: unknown): Promise<OfflineSaleIpcResult> => {
@@ -121,10 +109,27 @@ export function registerSalesIpc(saleService: SaleService, busyTracker?: BusyTra
       const run = async (): Promise<OfflineSaleIpcResult> => {
         try {
           const result = saleService.completeSale(validated.data);
+          const detailedSale = salesRepository.getDetailedSaleById(result.sale.id);
 
           return {
             success: true,
-            sale: result.sale,
+            sale: detailedSale ?? {
+              id: result.sale.id,
+              total: result.sale.total,
+              customer: result.sale.customer,
+              invoiceStatus: result.sale.invoiceStatus,
+              createdAt: result.sale.createdAt,
+              updatedAt: result.sale.createdAt,
+              items: [],
+              paymentMethods: [],
+              splitTicketGroups: null,
+              cae: null,
+              caeVto: null,
+              cbteNro: null,
+              cbteTipo: null,
+              ptoVta: null,
+              invoiceRequestedAt: null,
+            },
             warnings: result.warnings,
           };
         } catch (err) {
@@ -159,7 +164,7 @@ export function registerSalesIpc(saleService: SaleService, busyTracker?: BusyTra
     SALES_CHANNELS.GET_SALE,
     (_event, saleId: string): OfflineSaleIpcResult => {
       try {
-        const sale = saleService.getSale(saleId);
+        const sale = salesRepository.getDetailedSaleById(saleId);
 
         if (!sale) {
           return { success: false, error: "Sale not found", errorCode: "NOT_FOUND" };
@@ -167,13 +172,7 @@ export function registerSalesIpc(saleService: SaleService, busyTracker?: BusyTra
 
         return {
           success: true,
-          sale: {
-            id: sale.id,
-            total: sale.total,
-            customer: sale.customer,
-            invoiceStatus: sale.invoiceStatus,
-            createdAt: sale.createdAt,
-          },
+          sale,
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to retrieve sale";
@@ -184,9 +183,17 @@ export function registerSalesIpc(saleService: SaleService, busyTracker?: BusyTra
 
   ipcMain.handle(
     SALES_CHANNELS.LIST_SALES,
-    (): import("../../domain/sales/sale").ListedSale[] => {
+    (): DetailedListedSale[] => {
       try {
-        return saleService.listSales();
+        const syncStatuses = new Map(
+          saleService.listSales().map((sale) => [sale.id, { syncStatus: sale.syncStatus, invoiceRequested: sale.invoiceRequested }]),
+        );
+
+        return salesRepository.listDetailedSales().map((sale) => ({
+          ...sale,
+          invoiceRequested: syncStatuses.get(sale.id)?.invoiceRequested ?? false,
+          syncStatus: syncStatuses.get(sale.id)?.syncStatus ?? null,
+        }));
       } catch {
         return [];
       }
@@ -194,9 +201,6 @@ export function registerSalesIpc(saleService: SaleService, busyTracker?: BusyTra
   );
 }
 
-/**
- * Remove all sales IPC handlers.
- */
 export function unregisterSalesIpc(): void {
   ipcMain.removeHandler(SALES_CHANNELS.COMPLETE_SALE);
   ipcMain.removeHandler(SALES_CHANNELS.GET_SALE);
