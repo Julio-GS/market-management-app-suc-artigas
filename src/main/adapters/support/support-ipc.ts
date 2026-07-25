@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { ipcMain } from "electron";
+import { SUPPORT_CHANNELS } from "../../../shared/ipc-channels";
 import { SupportService } from "../../application/support/support-service";
 import type { BusyTracker } from "../../busy-state";
 import type {
@@ -15,17 +16,7 @@ import type {
   OutboxRetryResult,
 } from "../../domain/support/support";
 
-// ---------------------------------------------------------------------------
-// Channel constants (preserved byte-identical from legacy)
-// ---------------------------------------------------------------------------
-
-export const SUPPORT_CHANNELS = {
-  LIST_OUTBOX: "outbox:list",
-  RETRY_OUTBOX: "outbox:retry",
-  RETRY_SALE: "outbox:retry-sale",
-  RESOLVE_CONFLICT: "outbox:resolve-conflict",
-  EXPORT_OUTBOX: "outbox:export",
-} as const;
+export { SUPPORT_CHANNELS };
 
 // ---------------------------------------------------------------------------
 // Type re-exports (so preload can import from one module)

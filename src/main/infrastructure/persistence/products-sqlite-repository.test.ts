@@ -51,6 +51,11 @@ function createTestDb(dir: string): Database.Database {
       ('prod-4', 'Yogur Entero', NULL, '95.00', NULL, 'fixed', 'fixed',
        '', 1, 0, '["YOG-0001"]', 'fixed', 0, '2026-01-01', '2026-01-01')
   `).run();
+
+  db.prepare(`
+    INSERT OR REPLACE INTO stock_balances (product_id, stock_actual, updated_at)
+    VALUES ('prod-1', 17, '2026-01-01'), ('prod-2', 9, '2026-01-01')
+  `).run();
   return db;
 }
 
@@ -124,6 +129,11 @@ describe("ProductsSqliteRepository", () => {
   });
 
   describe("result shape mapping", () => {
+    it("maps local stock from stock_balances when present", () => {
+      const results = productsRepo.search({ search: "leche" });
+      expect(results[0].product?.stock).toBe(17);
+    });
+
     it("maps all OfflineProductRow fields to OfflineProductResult shape", () => {
       const results = productsRepo.search({ search: "leche" });
       expect(results).toHaveLength(1);
@@ -134,6 +144,7 @@ describe("ProductsSqliteRepository", () => {
       expect(product.facturable).toBe(true);
       expect(product.manejaStock).toBe(true);
       expect(product.pricingMode).toBe("fixed");
+      expect(product.stock).toBe(17);
       expect(product.costoNeto).toBeNull();
       expect(product.costoFinal).toBe("120.00");
       expect(product.iva).toBeNull();

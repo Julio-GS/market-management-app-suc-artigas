@@ -1,8 +1,8 @@
 {
-  "apiBaseUrl": "http://localhost:3001/api/v1",
+  "apiBaseUrl": "https://supermarket-management-backend-production.up.railway.app/api/v1",
   "frontendDevUrl": "http://localhost:3000",
   "updates": {
-    "enabled": false,
+    "enabled": true,
     "provider": "github",
     "owner": "Julio-GS",
     "repo": "market-management-app-suc-basualdo",

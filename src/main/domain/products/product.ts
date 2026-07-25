@@ -45,6 +45,7 @@ export interface OfflineProductResult {
     manejaStock: boolean;
     codigos: string[];
     pricingMode: string;
+    stock?: number | null;
     createdAt: string;
     updatedAt: string;
   };

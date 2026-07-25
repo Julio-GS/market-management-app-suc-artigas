@@ -1,0 +1,15 @@
+.atl/
+.github/
+.vscode/
+.idea/
+node_modules/
+release/
+out/
+src/
+scripts/
+*.log
+logs/
+*.tsbuildinfo
+tsconfig.json
+tsconfig.build.json
+vitest.config.*

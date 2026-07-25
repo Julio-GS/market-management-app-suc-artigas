@@ -48,7 +48,33 @@ import {
   unregisterSyncIpc,
   createBackendPushFn,
 } from "./sync-ipc";
+import { getConnectivityState, resetConnectivityState, setConnectivityState } from "../../connectivity-state";
 import type { OutboxEntryRow } from "../../sync-engine";
+
+function buildEntry(overrides: Partial<OutboxEntryRow> = {}): OutboxEntryRow {
+  return {
+    id: "entry-uuid-1",
+    idempotency_key: "ik-abc123",
+    operation_type: "sale_create",
+    aggregate_type: "sale",
+    aggregate_id: "sale-1",
+    payload: JSON.stringify({ total: "100.00", items: 3 }),
+    status: "pending",
+    base_server_version: null,
+    actor_user_id: "user-1",
+    attempt_count: 1,
+    next_retry_at: null,
+    last_error: null,
+    server_result: null,
+    created_at: "2026-07-20T10:00:00.000Z",
+    updated_at: "2026-07-20T10:00:00.000Z",
+    synced_at: null,
+    local_device_timestamp: overrides.local_device_timestamp ?? null,
+    manual_fix_reason: overrides.manual_fix_reason ?? null,
+    entity_label: overrides.entity_label ?? null,
+    ...overrides,
+  } as OutboxEntryRow;
+}
 
 // Helper to extract a typed handler from the mocked IPC
 function getHandler(channel: string): (...args: unknown[]) => Promise<unknown> {
@@ -63,6 +89,7 @@ function getHandler(channel: string): (...args: unknown[]) => Promise<unknown> {
 describe("sync-ipc", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetConnectivityState();
   });
 
   afterEach(() => {
@@ -240,6 +267,107 @@ describe("sync-ipc", () => {
       // pullAndApply SHOULD have been called when push is clean
       expect(mockPullAndApply).toHaveBeenCalledTimes(1);
     });
+
+    it("marks connectivity online after a successful push and pull cycle", async () => {
+      global.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.endsWith("/sync/push")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ results: [] }), { status: 200 }),
+          );
+        }
+
+        return Promise.resolve(
+          new Response(JSON.stringify({ changes: [], next_cursor: null, has_more: false }), {
+            status: 200,
+          }),
+        );
+      }) as unknown as typeof global.fetch;
+
+      mockReplayOutbox.mockImplementation(async (_db, pushFn) => {
+        await pushFn([buildEntry()]);
+        return {
+          synced: 1,
+          failed: 0,
+          blocked: 0,
+          skipped: 0,
+          revalidationBlocked: false,
+        };
+      });
+      mockPullAndApply.mockImplementation(async (_db, pullFn) => pullFn());
+
+      const getDb = vi.fn().mockReturnValue({});
+      registerSyncIpc(getDb);
+
+      const handler = getHandler(SYNC_CHANNELS.START_SYNC);
+      await handler({}, { apiBaseUrl: "http://localhost:3000/api/v1", token: "test-token" });
+
+      expect(getConnectivityState()).toBe("online");
+    });
+
+    it("keeps connectivity online when revalidation returns a backend auth error", async () => {
+      setConnectivityState("online");
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: "Unauthorized" }), {
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "Content-Type": "application/json" },
+        }),
+      ) as unknown as typeof global.fetch;
+
+      mockReplayOutbox.mockImplementation(async (_db, _pushFn, revalidateFn) => {
+        const result = await revalidateFn("user-1");
+        expect(result).toEqual({
+          valid: false,
+          user_id: "user-1",
+          reason: "Revalidation failed: 401 Unauthorized - {\"message\":\"Unauthorized\"}",
+        });
+        return {
+          synced: 0,
+          failed: 0,
+          blocked: 0,
+          skipped: 0,
+          revalidationBlocked: true,
+        };
+      });
+      mockPullAndApply.mockClear();
+
+      const getDb = vi.fn().mockReturnValue({});
+      registerSyncIpc(getDb);
+
+      const handler = getHandler(SYNC_CHANNELS.START_SYNC);
+      await handler({}, { apiBaseUrl: "http://localhost:3000/api/v1", token: "test-token" });
+
+      expect(getConnectivityState()).toBe("online");
+    });
+
+    it("marks connectivity offline when push fails against the backend", async () => {
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: "backend down" }), {
+          status: 503,
+          statusText: "Service Unavailable",
+          headers: { "Content-Type": "application/json" },
+        }),
+      ) as unknown as typeof global.fetch;
+
+      mockReplayOutbox.mockImplementation(async (_db, pushFn) => {
+        await pushFn([buildEntry()]);
+        return {
+          synced: 0,
+          failed: 0,
+          blocked: 0,
+          skipped: 0,
+          revalidationBlocked: false,
+        };
+      });
+
+      const getDb = vi.fn().mockReturnValue({});
+      registerSyncIpc(getDb);
+
+      const handler = getHandler(SYNC_CHANNELS.START_SYNC);
+      await handler({}, { apiBaseUrl: "http://localhost:3000/api/v1", token: "test-token" });
+
+      expect(getConnectivityState()).toBe("offline");
+    });
   });
 
   describe("sync:pull handler", () => {
@@ -275,6 +403,25 @@ describe("sync-ipc", () => {
         hasMore: false,
       });
     });
+
+    it("marks connectivity offline when pull receives a backend error", async () => {
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response("gateway failure", {
+          status: 502,
+          statusText: "Bad Gateway",
+        }),
+      ) as unknown as typeof global.fetch;
+
+      mockPullAndApply.mockImplementation(async (_db, pullFn) => pullFn());
+
+      const getDb = vi.fn().mockReturnValue({});
+      registerSyncIpc(getDb);
+
+      const handler = getHandler(SYNC_CHANNELS.PULL);
+      await handler({}, { apiBaseUrl: "http://localhost:3000/api/v1", token: "test-token" });
+
+      expect(getConnectivityState()).toBe("offline");
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -282,30 +429,6 @@ describe("sync-ipc", () => {
   // -----------------------------------------------------------------------
 
   describe("createBackendPushFn DTO serialization", () => {
-    function buildEntry(overrides: Partial<OutboxEntryRow> = {}): OutboxEntryRow {
-      return {
-        id: "entry-uuid-1",
-        idempotency_key: "ik-abc123",
-        operation_type: "sale_create",
-        aggregate_type: "sale",
-        aggregate_id: "sale-1",
-        payload: JSON.stringify({ total: "100.00", items: 3 }),
-        status: "pending",
-        base_server_version: null,
-        actor_user_id: "user-1",
-        attempt_count: 1,
-        next_retry_at: null,
-        last_error: null,
-        server_result: null,
-        created_at: "2026-07-20T10:00:00.000Z",
-        updated_at: "2026-07-20T10:00:00.000Z",
-        synced_at: null,
-        local_device_timestamp: overrides.local_device_timestamp ?? null,
-        manual_fix_reason: overrides.manual_fix_reason ?? null,
-        entity_label: overrides.entity_label ?? null,
-        ...overrides,
-      } as OutboxEntryRow;
-    }
 
     it("serializes id and created_at into /sync/push request entries", async () => {
       const fetchMock = vi.fn().mockResolvedValue(
@@ -414,6 +537,26 @@ describe("sync-ipc", () => {
       const headers = init.headers as Record<string, string>;
       expect(headers["Authorization"]).toBe("Bearer my-secret-token");
       expect(headers["Content-Type"]).toBe("application/json");
+    });
+
+    it("includes backend response details and marks connectivity offline on non-ok push", async () => {
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: "backend down" }), {
+          status: 503,
+          statusText: "Service Unavailable",
+          headers: { "Content-Type": "application/json" },
+        }),
+      ) as unknown as typeof global.fetch;
+
+      const pushFn = createBackendPushFn(
+        "http://localhost:3000/api/v1",
+        "my-secret-token",
+      );
+
+      await expect(pushFn([buildEntry()])).rejects.toThrow(
+        'Push request failed: 503 Service Unavailable - {"message":"backend down"}',
+      );
+      expect(getConnectivityState()).toBe("offline");
     });
   });
 });

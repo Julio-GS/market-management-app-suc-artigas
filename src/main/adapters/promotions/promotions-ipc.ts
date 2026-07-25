@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { ipcMain } from "electron";
+import { PROMOTIONS_CHANNELS } from "../../../shared/ipc-channels";
 import type { PromotionService } from "../../application/promotions/promotion-service";
 import type { BusyTracker } from "../../busy-state";
 import type {
@@ -17,19 +18,10 @@ import type {
   OfflinePromotionResult,
 } from "../../domain/promotions/promotion";
 
+export { PROMOTIONS_CHANNELS };
+
 // Re-export for preload consumers
 export type { OfflinePromotionInput, OfflinePromotionUpdateInput, OfflinePromotionResult };
-
-// ---------------------------------------------------------------------------
-// IPC channel constants
-// ---------------------------------------------------------------------------
-
-export const PROMOTIONS_CHANNELS = {
-  CREATE: "offline:promotions:create",
-  UPDATE: "offline:promotions:update",
-  DELETE: "offline:promotions:delete",
-  LIST: "offline:promotions:list",
-} as const;
 
 // ---------------------------------------------------------------------------
 // Handler registration

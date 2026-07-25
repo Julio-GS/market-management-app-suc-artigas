@@ -9,6 +9,7 @@
 import type Database from "better-sqlite3";
 import type { IBootstrapRepository } from "../../domain/bootstrap/bootstrap-repository";
 import type { BootstrapSnapshot, BootstrapResult } from "../../domain/bootstrap/bootstrap";
+import { setConnectivityState } from "../../connectivity-state";
 
 export class BootstrapSqliteRepository implements IBootstrapRepository {
   constructor(private readonly getDb: () => Database.Database) {}
@@ -66,7 +67,8 @@ export class BootstrapSqliteRepository implements IBootstrapRepository {
 
       if (!response.ok) {
         const body = await response.text();
-        const message = tryParseErrorMessage(body, response.status);
+        const message = tryParseErrorMessage(body, response.status, response.statusText);
+        setConnectivityState("offline");
         db.prepare(
           "INSERT OR REPLACE INTO metadata (key, value) VALUES ('bootstrap_status', 'failed')",
         ).run();
@@ -75,10 +77,12 @@ export class BootstrapSqliteRepository implements IBootstrapRepository {
 
       const snapshot = (await response.json()) as BootstrapSnapshot;
       this.ingestSnapshot(db, snapshot);
+      setConnectivityState("online");
 
       return this.getStatus();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown bootstrap error";
+      setConnectivityState("offline");
       db.prepare(
         "INSERT OR REPLACE INTO metadata (key, value) VALUES ('bootstrap_status', 'failed')",
       ).run();
@@ -103,6 +107,11 @@ export class BootstrapSqliteRepository implements IBootstrapRepository {
 
   private ingestSnapshot(db: Database.Database, snapshot: BootstrapSnapshot): void {
     const run = db.transaction(() => {
+      db.prepare("DELETE FROM products").run();
+      db.prepare("DELETE FROM stock_balances").run();
+      db.prepare("DELETE FROM promotions").run();
+      db.prepare("DELETE FROM provider_purchases").run();
+
       // Products
       const insertProduct = db.prepare(`
         INSERT OR REPLACE INTO products
@@ -238,11 +247,18 @@ export class BootstrapSqliteRepository implements IBootstrapRepository {
 // Helpers (module-private)
 // ---------------------------------------------------------------------------
 
-function tryParseErrorMessage(body: string, status: number): string {
+function tryParseErrorMessage(body: string, status: number, statusText?: string): string {
+  const prefix = `Backend returned status ${status}${statusText ? ` ${statusText}` : ""}`;
+
   try {
     const parsed = JSON.parse(body) as { message?: string };
-    return parsed.message ?? `Backend returned status ${status}`;
+    if (parsed.message) {
+      return `${prefix}: ${parsed.message}`;
+    }
   } catch {
-    return `Backend returned status ${status}`;
+    // fall through to raw body
   }
+
+  const trimmed = body.trim();
+  return trimmed.length > 0 ? `${prefix}: ${trimmed}` : prefix;
 }

@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { ipcMain } from "electron";
+import { PRODUCTS_CHANNELS } from "../../../shared/ipc-channels";
 import { OfflineAuthRequiredError } from "../../offline-auth";
 import type { ProductService } from "../../application/products/product-service";
 import type {
@@ -16,6 +17,8 @@ import type {
 } from "../../domain/products/product";
 import { sanitizeProductCodes } from "../../domain/products/product";
 import type { BusyTracker } from "../../busy-state";
+
+export { PRODUCTS_CHANNELS };
 
 // Re-export for preload consumers
 export type { OfflineProductInput, OfflineProductUpdateInput, OfflineProductResult };
@@ -195,19 +198,6 @@ export function validateProductCodeLookup(input: unknown): ValidationResult<stri
   }
   return { valid: true, data: input.trim() };
 }
-
-// ---------------------------------------------------------------------------
-// IPC channel constants
-// ---------------------------------------------------------------------------
-
-export const PRODUCTS_CHANNELS = {
-  CREATE: "offline:products:create",
-  UPDATE: "offline:products:update",
-  DELETE: "offline:products:delete",
-  LIST: "offline:products:list",
-  GET: "offline:products:get",
-  FIND_BY_CODE: "offline:products:findByCode",
-} as const;
 
 // ---------------------------------------------------------------------------
 // Handler registration

@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { encodeDesktopConfig, resolveDesktopConfig } from "./config";
 import { isAllowedPermission, isAllowedRendererNavigation, shouldOpenExternally } from "./navigation";
 import { startPackagedNextServer, stopPackagedNextServer } from "./next-server";
-import { registerUpdaterIpc, unregisterUpdaterIpc } from "./updater";
+import { checkForUpdatesOnStartup, registerUpdaterIpc, unregisterUpdaterIpc } from "./updater";
 import { createBusyTracker } from "./busy-state";
 import { getUpdateStatus } from "./updater-status";
 import { getDatabasePath, openDatabase, runMigrations, closeDatabase } from "./db";
@@ -21,6 +21,7 @@ import { SalesSqliteRepository } from "./infrastructure/persistence/sales-sqlite
 import { registerSyncIpc, unregisterSyncIpc, createBackendPushFn } from "./adapters/sync/sync-ipc";
 import { registerProductsIpc, unregisterProductsIpc } from "./adapters/products/products-ipc";
 import { registerPromotionsIpc, unregisterPromotionsIpc } from "./adapters/promotions/promotions-ipc";
+import { registerStockIpc, unregisterStockIpc } from "./adapters/stock/stock-ipc";
 import { ProductService } from "./application/products/product-service";
 import { PromotionService } from "./application/promotions/promotion-service";
 import { ProductsSqliteRepository } from "./infrastructure/persistence/products-sqlite-repository";
@@ -29,6 +30,7 @@ import { OutboxSqliteRepository } from "./infrastructure/persistence/outbox-sqli
 import { registerProviderPurchasesIpc, unregisterProviderPurchasesIpc } from "./adapters/provider-purchases/provider-purchases-ipc";
 import { ProviderPurchaseService } from "./application/provider-purchases/provider-purchase-service";
 import { ProviderPurchasesSqliteRepository } from "./infrastructure/persistence/provider-purchases-sqlite-repository";
+import { StockSqliteRepository } from "./infrastructure/persistence/stock-sqlite-repository";
 import { registerReportsIpc, unregisterReportsIpc } from "./adapters/reports/reports-ipc";
 import { ReportService } from "./application/reports/report-service";
 import { ReportsSqliteRepository } from "./infrastructure/persistence/reports-sqlite-repository";
@@ -157,7 +159,7 @@ function initDatabase(
   const outboxRepository = new OutboxSqliteRepository(getDb);
   const salesRepository = new SalesSqliteRepository(getDb, outboxRepository);
   const saleService = new SaleService(salesRepository);
-  registerSalesIpc(saleService, busyTracker);
+  registerSalesIpc(saleService, salesRepository, busyTracker);
   registerSyncIpc(getDb, setLastSyncAuth, busyTracker);
   const productsRepository = new ProductsSqliteRepository(getDb, outboxRepository);
   const productService = new ProductService(productsRepository);
@@ -168,6 +170,8 @@ function initDatabase(
   const providerPurchasesRepository = new ProviderPurchasesSqliteRepository(getDb, outboxRepository);
   const providerPurchaseService = new ProviderPurchaseService(providerPurchasesRepository);
   registerProviderPurchasesIpc(providerPurchaseService, busyTracker);
+  const stockRepository = new StockSqliteRepository(getDb, outboxRepository);
+  registerStockIpc(stockRepository, busyTracker);
   const reportsRepository = new ReportsSqliteRepository(getDb);
   const reportService = new ReportService(reportsRepository);
   registerReportsIpc(reportService);
@@ -217,6 +221,7 @@ function shutdownDatabase(): void {
   unregisterReportsIpc();
   unregisterProviderPurchasesIpc();
   unregisterPromotionsIpc();
+  unregisterStockIpc();
   unregisterProductsIpc();
   unregisterOfflineIpc();
   unregisterBootstrapIpc();
@@ -306,11 +311,27 @@ async function createWindow(): Promise<void> {
   const encodedConfig = encodeDesktopConfig(rendererConfig);
   const window = createBrowserWindow(encodedConfig);
 
+  if (process.env.MARKET_DESKTOP_OPEN_DEVTOOLS === "1") {
+    window.webContents.openDevTools({ mode: "detach" });
+  }
+
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    log.error("Renderer failed to load", { errorCode, errorDescription, validatedURL });
+  });
+
+  window.webContents.on("did-finish-load", () => {
+    log.info("Renderer finished loading", { url: window.webContents.getURL() });
+  });
+
   window.webContents.on("destroyed", () => {
     busyTracker.clearTokensForRendererView(window.webContents.id);
     unregisterUpdaterIpc();
   });
-  registerUpdaterIpc(rendererConfig, window.webContents, busyTracker);
+  const updaterStatus = registerUpdaterIpc(rendererConfig, window.webContents, busyTracker);
+  if (app.isPackaged) {
+    checkForUpdatesOnStartup(updaterStatus);
+  }
+
   const rendererUrl = app.isPackaged
     ? (await startPackagedNextServer()).url
     : config.frontendDevUrl;
