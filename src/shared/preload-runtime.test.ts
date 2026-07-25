@@ -13,7 +13,29 @@ describe("preload runtime shared modules", () => {
       offline: { enabled: true, integrityCheckOnStartup: true },
     };
 
-    expect(decodeDesktopConfig(encodeDesktopConfig(config))).toEqual(config);
+    const encoded = encodeDesktopConfig(config);
+
+    expect(encoded).not.toMatch(/[+/=]/);
+    expect(decodeDesktopConfig(encoded)).toEqual(config);
+  });
+
+  it("decodes URL-safe config without requiring Node's base64url encoding", () => {
+    const config: DesktopConfig = {
+      apiBaseUrl: "http://localhost:3000/api/v1",
+      frontendDevUrl: "http://localhost:3001",
+      appVersion: "1.2.3",
+      updateEnabled: true,
+      updates: { enabled: true, provider: "github", owner: "omnia", repo: "market-management-app" },
+      offline: { enabled: true, integrityCheckOnStartup: true },
+    };
+    const json = JSON.stringify(config);
+    const encoded = Buffer.from(json, "utf8")
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+
+    expect(decodeDesktopConfig(encoded)).toEqual(config);
   });
 
   it("exposes stable IPC channel constants for preload", () => {

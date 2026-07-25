@@ -41,10 +41,24 @@ export interface DesktopConfig {
   offline: OfflineConfig;
 }
 
+function toUrlSafeBase64(value: string): string {
+  return Buffer.from(value, "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function fromUrlSafeBase64(value: string): string {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const paddedBase64 = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+  return Buffer.from(paddedBase64, "base64").toString("utf8");
+}
+
 export function encodeDesktopConfig(config: DesktopConfig): string {
-  return Buffer.from(JSON.stringify(config), "utf8").toString("base64url");
+  return toUrlSafeBase64(JSON.stringify(config));
 }
 
 export function decodeDesktopConfig(encoded: string): DesktopConfig {
-  return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as DesktopConfig;
+  return JSON.parse(fromUrlSafeBase64(encoded)) as DesktopConfig;
 }
