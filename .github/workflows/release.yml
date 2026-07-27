@@ -37,6 +37,7 @@ jobs:
         with:
           repository: ${{ env.FRONTEND_REPOSITORY }}
           ref: ${{ env.FRONTEND_REF }}
+          token: ${{ secrets.GH_TOKEN }}
           path: frontend-management-market/supermarket-management-frontend
 
       - name: Set up pnpm
@@ -94,7 +95,7 @@ jobs:
       - name: Validate GitHub release token
         run: node scripts/require-gh-token.mjs
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
       - name: Download VC++ Redistributable for installer
         run: pnpm prepare:vc-redist
@@ -102,13 +103,13 @@ jobs:
       - name: Publish GitHub Release assets
         run: pnpm exec electron-builder --publish always
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
       - name: Verify GitHub Release assets
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           gh release view "$env:RELEASE_TAG" --repo "$env:DESKTOP_RELEASE_REPOSITORY" --json tagName,assets
           $release = gh release view "$env:RELEASE_TAG" --repo "$env:DESKTOP_RELEASE_REPOSITORY" --json assets | ConvertFrom-Json
