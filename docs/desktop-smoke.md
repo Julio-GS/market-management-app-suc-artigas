@@ -15,7 +15,7 @@ Use this checklist to verify that the Electron desktop shell preserves the curre
 - pnpm
 - Backend API available at `MARKET_API_BASE_URL` or `http://localhost:3000/api/v1`
 - Frontend dev server available at `FRONTEND_DEV_URL` or `http://localhost:3001`
-- Desktop repository remote: `https://github.com/Julio-GS/market-management-app-suc-basualdo.git`
+- Desktop repository remote: `https://github.com/Julio-GS/market-management-app-suc-artigas.git`
 
 ## Commands
 
@@ -34,10 +34,15 @@ pnpm build:frontend
 pnpm copy:frontend
 pnpm prepare:frontend
 
+# VC++ Redistributable (required before packaging)
+pnpm prepare:vc-redist
+
 # Windows packaging
 pnpm package:dir
 pnpm package
 ```
+
+> The installer bundles the Microsoft Visual C++ Redistributable (x64). On a clean Windows PC, the app should start without a separate VC++ runtime install — the installer runs it silently during setup. `pnpm prepare:vc-redist` downloads the redistributable to `build/vc_redist.x64.exe` before packaging.
 
 ## Development launch
 
@@ -109,19 +114,21 @@ These checks verify current behavior only. Do not treat this list as approval fo
 | Unpacked build | Run `pnpm package:dir` | `release/win-unpacked/` is created when Windows symlink privileges are available. |
 | Packaged app | Launch `release/win-unpacked/Market Management.exe` | App starts the bundled Next server from `resources/frontend/standalone/server.js`. |
 | Installer | Run `pnpm package` | NSIS installer is generated when packaging environment is correctly configured. |
+| Clean-PC launch | Install on a Windows PC with no VC++ runtime preinstalled | App starts and login works; `better-sqlite3` loads without `sqlite3` module errors. |
 
 > Windows packaging note: if packaging fails with `Cannot create symbolic link` while extracting `winCodeSign`, enable **Windows Developer Mode** or run the packaging command from an elevated terminal. This is an Electron Builder/Windows privilege issue, not an application build failure.
 
-## Update-disabled fallback
+## Update defaults
 
-Updates are scaffolded but disabled by default. The renderer must call `updates.check()` → `updates.download()` → `updates.installAndRestart()` explicitly; no automatic download or install is performed.
+Updates are enabled by default through `build/default-config.json`. The renderer must call `updates.check()` → `updates.download()` → `updates.installAndRestart()` explicitly; no automatic download or install is performed.
 
 | Check | Action | Expected result |
 | --- | --- | --- |
-| Default config | Open `build/default-config.json` | `updates.enabled` is `false`; GitHub provider defaults (`provider`, `owner`, `repo`, `channel`) are present. |
-| Runtime config | Call `window.marketDesktop.getConfig()` in DevTools | `updateEnabled` is `false` by default. |
-| Update status | Call `window.marketDesktop.updates.getStatus()` | Returns `{ state: "disabled", enabled: false, reason: "..." }`. |
-| Check update | Call `window.marketDesktop.updates.check()` | Returns disabled status and does not crash. |
+| Default config | Open `build/default-config.json` | `updates.enabled` is `true`; GitHub provider defaults (`provider`, `owner`, `repo`, `channel`) are present. |
+| Runtime config | Call `window.marketDesktop.getConfig()` in DevTools | `updateEnabled` is `true` by default. |
+| Update status | Call `window.marketDesktop.updates.getStatus()` | Returns `{ state: "checking-for-update" }` or equivalent enabled status. |
+| Check update | Call `window.marketDesktop.updates.check()` | Initiates update check; does not crash. |
+| Disable updates | Set `updates.enabled: false` in runtime config | `updateEnabled` becomes `false` and `updates.getStatus()` returns disabled state. |
 
 ## Installer build and publish smoke
 
@@ -131,6 +138,7 @@ These checks verify the GitHub Releases publishing pipeline. Publishing requires
 
 | Check | Action | Expected result |
 | --- | --- | --- |
+| VC++ Redist download | Run `pnpm prepare:vc-redist` | `build/vc_redist.x64.exe` exists (>10 MB) and the script prints a success message. |
 | Package (no publish) | Run `pnpm package` | NSIS installer produced; no GitHub release is created. |
 | Package dir (no publish) | Run `pnpm package:dir` | `release/win-unpacked/` is created. |
 | GH_TOKEN preflight | Run `node scripts/require-gh-token.mjs` without `GH_TOKEN` | Script exits with code 1 and a clear error message. |
@@ -145,6 +153,23 @@ These checks verify the GitHub Releases publishing pipeline. Publishing requires
 | Download | Call `updates.download()` from renderer | Progress events fire; update transitions to `downloaded-pending`. |
 | Busy deferral | Start a sale, then call `updates.installAndRestart()` | Status transitions to `blocked-by-busy-state`; app does NOT restart. |
 | Idle install | Complete the sale so the app is idle | Deferred install resumes; app restarts with the new version. |
+
+### CI release (GitHub Actions)
+
+These checks verify the tag-triggered CI release pipeline defined in `.github/workflows/release.yml`.
+
+| Check | Action | Expected result |
+| --- | --- | --- |
+| Tag trigger | Push a `v<package.version>` tag | `Release Desktop` workflow starts on `windows-2022` with Node.js `22.10.0`. |
+| Branch push (no trigger) | Push a commit without a tag | Workflow does NOT start. |
+| Tag/version mismatch | Push a tag that does not match `package.json` version | Workflow fails at validation step before any build. |
+| Workspace layout | Inspect workflow run logs | Desktop checkout at `desktop/`; frontend checkout at `frontend-management-market/supermarket-management-frontend/`; commands run from `desktop/`. |
+| Frontend ref pin | Inspect workflow YAML/logs | Frontend checkout uses the committed `FRONTEND_REF` SHA, not a floating branch. |
+| Quality gates | Inspect workflow run logs | `pnpm typecheck` and `pnpm test` pass before packaging or publishing. |
+| Sibling path resolution | Inspect build step logs | `../frontend-management-market/supermarket-management-frontend` resolves from `desktop/` to the frontend checkout. |
+| Release assets | Inspect GitHub Release after successful run | `.exe`, `.exe.blockmap`, and `latest.yml` are present. |
+| Manual dispatch absence | Open the Actions workflow UI | No `workflow_dispatch` release trigger is available; retry by re-running the tag workflow. |
+| Local fallback | Run `pnpm publish:github` with valid `GH_TOKEN` | Emergency local publish still works. |
 
 ### Signing
 
@@ -166,7 +191,7 @@ These checks verify the GitHub Releases publishing pipeline. Publishing requires
 
 ## Release readiness notes
 
-- Keep updates disabled until signing and GitHub Releases publishing are confirmed.
+- Updates are enabled by default through `build/default-config.json`. Disable updates through runtime config only when the update path is known to be unavailable or misbehaving.
 - Do not ship a broad preload API. Only expose explicit allowlisted methods.
 - Resolve the Next workspace-root warning later with `turbopack.root` if it becomes noisy or changes build output.
 - Backend and frontend behavior must remain independently verifiable outside Electron.

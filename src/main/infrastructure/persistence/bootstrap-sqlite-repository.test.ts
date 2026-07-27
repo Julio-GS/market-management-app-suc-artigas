@@ -483,7 +483,7 @@ describe("BootstrapSqliteRepository", () => {
       globalThis.fetch = originalFetch;
     });
 
-    it("handles HTTP error without JSON body and returns status fallback", async () => {
+    it("handles HTTP error without JSON body and returns raw body details", async () => {
       const originalFetch = globalThis.fetch;
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: false,
@@ -494,7 +494,7 @@ describe("BootstrapSqliteRepository", () => {
       const result = await repo.start("token", MOCK_BACKEND_URL);
 
       expect(result.status).toBe("failed");
-      expect(result.error).toBe("Backend returned status 500");
+      expect(result.error).toBe("Backend returned status 500: Internal Server Error");
 
       globalThis.fetch = originalFetch;
     });

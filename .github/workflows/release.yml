@@ -1,0 +1,117 @@
+name: Release Desktop
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  FRONTEND_REF: 9e6b48e1cfccf3e2abe81df048fed594c2657d63
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release-windows:
+    name: Build and publish Windows release
+    runs-on: windows-2022
+    defaults:
+      run:
+        working-directory: desktop
+
+    steps:
+      - name: Check out desktop repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: desktop
+
+      - name: Check out frontend repository
+        uses: actions/checkout@v4
+        with:
+          repository: Julio-GS/supermarket-management-frontend
+          ref: ${{ env.FRONTEND_REF }}
+          path: frontend-management-market/supermarket-management-frontend
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.10.0
+          cache: pnpm
+          cache-dependency-path: |
+            desktop/pnpm-lock.yaml
+            frontend-management-market/supermarket-management-frontend/pnpm-lock.yaml
+
+      - name: Install desktop dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install frontend dependencies
+        run: pnpm --dir ../frontend-management-market/supermarket-management-frontend install --frozen-lockfile
+
+      - name: Validate release tag matches package version
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json | ConvertFrom-Json
+          $expected = "v$($package.version)"
+          $actual = "${{ github.ref_name }}"
+
+          if ($actual -ne $expected) {
+            Write-Error "Release tag mismatch. Expected $expected from package.json, got $actual."
+            exit 1
+          }
+
+          "RELEASE_TAG=$actual" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Run typecheck
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Clean previous build outputs
+        run: pnpm clean
+
+      - name: Rebuild native Electron dependencies
+        run: pnpm rebuild:electron
+
+      - name: Build desktop code
+        run: pnpm build:desktop
+
+      - name: Build and copy frontend assets
+        run: pnpm prepare:frontend
+
+      - name: Validate GH_TOKEN secret
+        run: node scripts/require-gh-token.mjs
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Download VC++ Redistributable for installer
+        run: pnpm prepare:vc-redist
+
+      - name: Publish GitHub Release assets
+        run: pnpm exec electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Verify GitHub Release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          gh release view "$env:RELEASE_TAG" --repo Julio-GS/market-management-app-suc-artigas --json tagName,assets
+          $release = gh release view "$env:RELEASE_TAG" --repo Julio-GS/market-management-app-suc-artigas --json assets | ConvertFrom-Json
+          $assetNames = @($release.assets | ForEach-Object { $_.name })
+
+          if (-not ($assetNames | Where-Object { $_ -like "*.exe" })) { throw "Missing Windows installer .exe asset." }
+          if (-not ($assetNames | Where-Object { $_ -like "*.exe.blockmap" })) { throw "Missing installer blockmap asset." }
+          if (-not ($assetNames -contains "latest.yml")) { throw "Missing latest.yml asset." }

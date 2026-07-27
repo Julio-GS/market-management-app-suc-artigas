@@ -17,9 +17,15 @@ vi.mock("electron-log", () => ({
   }
 }));
 
-import { waitForServerReady } from "./next-server";
+import { waitForServerReady, type WaitForServerReadyOptions } from "./next-server";
 
 class FakeChildProcess extends EventEmitter {}
+
+type FakeWaitChild = WaitForServerReadyOptions["child"] & FakeChildProcess;
+
+function createFakeChild(): FakeWaitChild {
+  return new FakeChildProcess() as FakeWaitChild;
+}
 
 describe("waitForServerReady", () => {
   beforeEach(() => {
@@ -32,8 +38,8 @@ describe("waitForServerReady", () => {
   });
 
   it("resolves once the packaged server becomes reachable", async () => {
-    const child = new FakeChildProcess();
-    const probe = vi.fn<[string], Promise<boolean>>()
+    const child = createFakeChild();
+    const probe = vi.fn<(url: string) => Promise<boolean>>()
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(true);
@@ -53,8 +59,8 @@ describe("waitForServerReady", () => {
   });
 
   it("fails with a clear timeout reason when the packaged server never responds", async () => {
-    const child = new FakeChildProcess();
-    const probe = vi.fn<[string], Promise<boolean>>().mockRejectedValue(new Error("connect ECONNREFUSED"));
+    const child = createFakeChild();
+    const probe = vi.fn<(url: string) => Promise<boolean>>().mockRejectedValue(new Error("connect ECONNREFUSED"));
 
     const readyPromise = waitForServerReady({
       child,
@@ -73,8 +79,8 @@ describe("waitForServerReady", () => {
   });
 
   it("fails when the packaged server process exits before becoming ready", async () => {
-    const child = new FakeChildProcess();
-    const probe = vi.fn<[string], Promise<boolean>>().mockResolvedValue(false);
+    const child = createFakeChild();
+    const probe = vi.fn<(url: string) => Promise<boolean>>().mockResolvedValue(false);
 
     const readyPromise = waitForServerReady({
       child,
