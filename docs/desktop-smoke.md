@@ -112,16 +112,17 @@ These checks verify current behavior only. Do not treat this list as approval fo
 
 > Windows packaging note: if packaging fails with `Cannot create symbolic link` while extracting `winCodeSign`, enable **Windows Developer Mode** or run the packaging command from an elevated terminal. This is an Electron Builder/Windows privilege issue, not an application build failure.
 
-## Update-disabled fallback
+## Update defaults
 
-Updates are scaffolded but disabled by default. The renderer must call `updates.check()` → `updates.download()` → `updates.installAndRestart()` explicitly; no automatic download or install is performed.
+Updates are enabled by default through `build/default-config.json`. The renderer must call `updates.check()` → `updates.download()` → `updates.installAndRestart()` explicitly; no automatic download or install is performed.
 
 | Check | Action | Expected result |
 | --- | --- | --- |
-| Default config | Open `build/default-config.json` | `updates.enabled` is `false`; GitHub provider defaults (`provider`, `owner`, `repo`, `channel`) are present. |
-| Runtime config | Call `window.marketDesktop.getConfig()` in DevTools | `updateEnabled` is `false` by default. |
-| Update status | Call `window.marketDesktop.updates.getStatus()` | Returns `{ state: "disabled", enabled: false, reason: "..." }`. |
-| Check update | Call `window.marketDesktop.updates.check()` | Returns disabled status and does not crash. |
+| Default config | Open `build/default-config.json` | `updates.enabled` is `true`; GitHub provider defaults (`provider`, `owner`, `repo`, `channel`) are present. |
+| Runtime config | Call `window.marketDesktop.getConfig()` in DevTools | `updateEnabled` is `true` by default. |
+| Update status | Call `window.marketDesktop.updates.getStatus()` | Returns `{ state: "checking-for-update" }` or equivalent enabled status. |
+| Check update | Call `window.marketDesktop.updates.check()` | Initiates update check; does not crash. |
+| Disable updates | Set `updates.enabled: false` in runtime config | `updateEnabled` becomes `false` and `updates.getStatus()` returns disabled state. |
 
 ## Installer build and publish smoke
 
@@ -146,6 +147,23 @@ These checks verify the GitHub Releases publishing pipeline. Publishing requires
 | Busy deferral | Start a sale, then call `updates.installAndRestart()` | Status transitions to `blocked-by-busy-state`; app does NOT restart. |
 | Idle install | Complete the sale so the app is idle | Deferred install resumes; app restarts with the new version. |
 
+### CI release (GitHub Actions)
+
+These checks verify the tag-triggered CI release pipeline defined in `.github/workflows/release.yml`.
+
+| Check | Action | Expected result |
+| --- | --- | --- |
+| Tag trigger | Push a `v<package.version>` tag | `Release Desktop` workflow starts on `windows-latest`. |
+| Branch push (no trigger) | Push a commit without a tag | Workflow does NOT start. |
+| Tag/version mismatch | Push a tag that does not match `package.json` version | Workflow fails at validation step before any build. |
+| Workspace layout | Inspect workflow run logs | Desktop checkout at `desktop/`; frontend checkout at `frontend-management-market/supermarket-management-frontend/`; commands run from `desktop/`. |
+| Frontend ref pin | Inspect workflow YAML/logs | Frontend checkout uses the committed `FRONTEND_REF` SHA, not a floating branch. |
+| Quality gates | Inspect workflow run logs | `pnpm typecheck` and `pnpm test` pass before packaging or publishing. |
+| Sibling path resolution | Inspect build step logs | `../frontend-management-market/supermarket-management-frontend` resolves from `desktop/` to the frontend checkout. |
+| Release assets | Inspect GitHub Release after successful run | `.exe`, `.exe.blockmap`, and `latest.yml` are present. |
+| Manual dispatch absence | Open the Actions workflow UI | No `workflow_dispatch` release trigger is available; retry by re-running the tag workflow. |
+| Local fallback | Run `pnpm publish:github` with valid `GH_TOKEN` | Emergency local publish still works. |
+
 ### Signing
 
 | Check | Action | Expected result |
@@ -166,7 +184,7 @@ These checks verify the GitHub Releases publishing pipeline. Publishing requires
 
 ## Release readiness notes
 
-- Keep updates disabled until signing and GitHub Releases publishing are confirmed.
+- Updates are enabled by default through `build/default-config.json`. Disable updates through runtime config only when the update path is known to be unavailable or misbehaving.
 - Do not ship a broad preload API. Only expose explicit allowlisted methods.
 - Resolve the Next workspace-root warning later with `turbopack.root` if it becomes noisy or changes build output.
 - Backend and frontend behavior must remain independently verifiable outside Electron.
