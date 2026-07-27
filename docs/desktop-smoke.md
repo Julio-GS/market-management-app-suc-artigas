@@ -34,10 +34,15 @@ pnpm build:frontend
 pnpm copy:frontend
 pnpm prepare:frontend
 
+# VC++ Redistributable (required before packaging)
+pnpm prepare:vc-redist
+
 # Windows packaging
 pnpm package:dir
 pnpm package
 ```
+
+> The installer bundles the Microsoft Visual C++ Redistributable (x64). On a clean Windows PC, the app should start without a separate VC++ runtime install — the installer runs it silently during setup. `pnpm prepare:vc-redist` downloads the redistributable to `build/vc_redist.x64.exe` before packaging.
 
 ## Development launch
 
@@ -109,6 +114,7 @@ These checks verify current behavior only. Do not treat this list as approval fo
 | Unpacked build | Run `pnpm package:dir` | `release/win-unpacked/` is created when Windows symlink privileges are available. |
 | Packaged app | Launch `release/win-unpacked/Market Management.exe` | App starts the bundled Next server from `resources/frontend/standalone/server.js`. |
 | Installer | Run `pnpm package` | NSIS installer is generated when packaging environment is correctly configured. |
+| Clean-PC launch | Install on a Windows PC with no VC++ runtime preinstalled | App starts and login works; `better-sqlite3` loads without `sqlite3` module errors. |
 
 > Windows packaging note: if packaging fails with `Cannot create symbolic link` while extracting `winCodeSign`, enable **Windows Developer Mode** or run the packaging command from an elevated terminal. This is an Electron Builder/Windows privilege issue, not an application build failure.
 
@@ -132,6 +138,7 @@ These checks verify the GitHub Releases publishing pipeline. Publishing requires
 
 | Check | Action | Expected result |
 | --- | --- | --- |
+| VC++ Redist download | Run `pnpm prepare:vc-redist` | `build/vc_redist.x64.exe` exists (>10 MB) and the script prints a success message. |
 | Package (no publish) | Run `pnpm package` | NSIS installer produced; no GitHub release is created. |
 | Package dir (no publish) | Run `pnpm package:dir` | `release/win-unpacked/` is created. |
 | GH_TOKEN preflight | Run `node scripts/require-gh-token.mjs` without `GH_TOKEN` | Script exits with code 1 and a clear error message. |

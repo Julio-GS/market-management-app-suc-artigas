@@ -18,11 +18,14 @@ pnpm typecheck
 pnpm build
 pnpm dev
 pnpm prepare:frontend
+pnpm prepare:vc-redist
 pnpm package:dir
 pnpm package
 ```
 
 > On Windows, `electron-builder` may require Developer Mode or elevated symlink privileges while extracting signing helpers. If packaging fails with `Cannot create symbolic link`, enable Developer Mode or run the packaging command from an elevated terminal.
+
+> The installer bundles the Microsoft Visual C++ Redistributable (x64) so `better-sqlite3` works on clean Windows PCs without a separate VC++ runtime install. `pnpm prepare:vc-redist` downloads the redistributable before packaging; it is included in the NSIS installer and run silently during setup.
 
 ## Current slice status
 

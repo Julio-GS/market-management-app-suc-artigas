@@ -94,6 +94,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
+      - name: Download VC++ Redistributable for installer
+        run: pnpm prepare:vc-redist
+
       - name: Publish GitHub Release assets
         run: pnpm exec electron-builder --publish always
         env:

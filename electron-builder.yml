@@ -40,6 +40,7 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Market Management
+  include: build/installer.nsh
 
 publish:
   provider: github
