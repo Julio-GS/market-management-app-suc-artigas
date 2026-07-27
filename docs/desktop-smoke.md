@@ -160,7 +160,7 @@ These checks verify the tag-triggered CI release pipeline defined in `.github/wo
 
 | Check | Action | Expected result |
 | --- | --- | --- |
-| Tag trigger | Push a `v<package.version>` tag | `Release Desktop` workflow starts on `windows-latest`. |
+| Tag trigger | Push a `v<package.version>` tag | `Release Desktop` workflow starts on `windows-2022` with Node.js `22.10.0`. |
 | Branch push (no trigger) | Push a commit without a tag | Workflow does NOT start. |
 | Tag/version mismatch | Push a tag that does not match `package.json` version | Workflow fails at validation step before any build. |
 | Workspace layout | Inspect workflow run logs | Desktop checkout at `desktop/`; frontend checkout at `frontend-management-market/supermarket-management-frontend/`; commands run from `desktop/`. |

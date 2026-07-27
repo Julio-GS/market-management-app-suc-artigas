@@ -70,7 +70,7 @@ The primary release path is a tag-triggered GitHub Actions workflow (`.github/wo
 | Property | Value |
 | --- | --- |
 | Trigger | `v*` tag push only |
-| Runner | `windows-latest` |
+| Runner | `windows-2022` with Node.js `22.10.0` |
 | Permissions | `contents: write` (declared in workflow YAML) |
 | Platform | Windows NSIS x64 only; unsigned installer |
 
