@@ -6,7 +6,9 @@ on:
       - "v*"
 
 env:
-  FRONTEND_REF: 9e6b48e1cfccf3e2abe81df048fed594c2657d63
+  FRONTEND_REPOSITORY: Julio-GS/market-management-suc-Artigas
+  FRONTEND_REF: b6bdfe05fb5ee8d46ee61ff87e76cc388d468289
+  DESKTOP_RELEASE_REPOSITORY: ${{ github.repository }}
 
 permissions:
   contents: write
@@ -33,7 +35,7 @@ jobs:
       - name: Check out frontend repository
         uses: actions/checkout@v4
         with:
-          repository: Julio-GS/supermarket-management-frontend
+          repository: ${{ env.FRONTEND_REPOSITORY }}
           ref: ${{ env.FRONTEND_REF }}
           path: frontend-management-market/supermarket-management-frontend
 
@@ -89,10 +91,10 @@ jobs:
       - name: Build and copy frontend assets
         run: pnpm prepare:frontend
 
-      - name: Validate GH_TOKEN secret
+      - name: Validate GitHub release token
         run: node scripts/require-gh-token.mjs
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
 
       - name: Download VC++ Redistributable for installer
         run: pnpm prepare:vc-redist
@@ -100,16 +102,16 @@ jobs:
       - name: Publish GitHub Release assets
         run: pnpm exec electron-builder --publish always
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
 
       - name: Verify GitHub Release assets
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$env:RELEASE_TAG" --repo Julio-GS/market-management-app-suc-artigas --json tagName,assets
-          $release = gh release view "$env:RELEASE_TAG" --repo Julio-GS/market-management-app-suc-artigas --json assets | ConvertFrom-Json
+          gh release view "$env:RELEASE_TAG" --repo "$env:DESKTOP_RELEASE_REPOSITORY" --json tagName,assets
+          $release = gh release view "$env:RELEASE_TAG" --repo "$env:DESKTOP_RELEASE_REPOSITORY" --json assets | ConvertFrom-Json
           $assetNames = @($release.assets | ForEach-Object { $_.name })
 
           if (-not ($assetNames | Where-Object { $_ -like "*.exe" })) { throw "Missing Windows installer .exe asset." }
