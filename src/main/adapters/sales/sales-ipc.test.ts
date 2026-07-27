@@ -29,6 +29,7 @@ import {
 import type { SaleService } from "../../application/sales/sale-service";
 import { FiscalBlockedError } from "../../domain/sales/sale";
 import { OfflineAuthRequiredError } from "../../offline-auth";
+import type { SalesSqliteRepository } from "../../infrastructure/persistence/sales-sqlite-repository";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -37,9 +38,15 @@ import { OfflineAuthRequiredError } from "../../offline-auth";
 function createMockSaleService() {
   return {
     completeSale: vi.fn(),
-    getSale: vi.fn(),
     listSales: vi.fn(),
   } as unknown as SaleService;
+}
+
+function createMockSalesRepository() {
+  return {
+    getDetailedSaleById: vi.fn(),
+    listDetailedSales: vi.fn(),
+  } as unknown as SalesSqliteRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -56,9 +63,11 @@ describe("SALES_CHANNELS", () => {
 
 describe("registerSalesIpc / unregisterSalesIpc", () => {
   let mockService: SaleService;
+  let mockSalesRepository: SalesSqliteRepository;
 
   beforeEach(() => {
     mockService = createMockSaleService();
+    mockSalesRepository = createMockSalesRepository();
   });
 
   afterEach(() => {
@@ -76,25 +85,25 @@ describe("registerSalesIpc / unregisterSalesIpc", () => {
   });
 
   it("registerSalesIpc succeeds with a valid service", () => {
-    expect(() => registerSalesIpc(mockService)).not.toThrow();
+    expect(() => registerSalesIpc(mockService, mockSalesRepository)).not.toThrow();
   });
 
   it("unregisterSalesIpc succeeds after registration", () => {
-    registerSalesIpc(mockService);
+    registerSalesIpc(mockService, mockSalesRepository);
     expect(() => unregisterSalesIpc()).not.toThrow();
   });
 
   it("register -> unregister -> register cycle is safe", () => {
-    registerSalesIpc(mockService);
+    registerSalesIpc(mockService, mockSalesRepository);
     unregisterSalesIpc();
-    expect(() => registerSalesIpc(mockService)).not.toThrow();
+    expect(() => registerSalesIpc(mockService, mockSalesRepository)).not.toThrow();
     unregisterSalesIpc();
   });
 
   it("registers IPC handlers on all three channels", async () => {
     const { ipcMain } = await import("electron");
 
-    registerSalesIpc(mockService);
+    registerSalesIpc(mockService, mockSalesRepository);
 
     expect(ipcMain.handle).toHaveBeenCalledWith(
       "offline:sales:complete",
@@ -113,7 +122,7 @@ describe("registerSalesIpc / unregisterSalesIpc", () => {
   it("unregisterSalesIpc removes all three IPC handlers", async () => {
     const { ipcMain } = await import("electron");
 
-    registerSalesIpc(mockService);
+    registerSalesIpc(mockService, mockSalesRepository);
     unregisterSalesIpc();
 
     expect(ipcMain.removeHandler).toHaveBeenCalledWith("offline:sales:complete");
@@ -402,9 +411,11 @@ describe("validateSaleInput", () => {
 
 describe("IPC complete handler", () => {
   let mockService: SaleService;
+  let mockSalesRepository: SalesSqliteRepository;
 
   beforeEach(() => {
     mockService = createMockSaleService();
+    mockSalesRepository = createMockSalesRepository();
   });
 
   afterEach(() => {
@@ -418,7 +429,7 @@ describe("IPC complete handler", () => {
 
   async function invokeComplete(input: unknown) {
     const { ipcMain } = await import("electron");
-    registerSalesIpc(mockService);
+    registerSalesIpc(mockService, mockSalesRepository);
 
     const handler = ((ipcMain as unknown as { _handlers: Map<string, (...args: any[]) => any> })._handlers).get(
       "offline:sales:complete",
@@ -431,7 +442,6 @@ describe("IPC complete handler", () => {
     const result = await invokeComplete(null);
     expect(result.success).toBe(false);
     expect(result.errorCode).toBe("INVALID_INPUT");
-    // Service should NOT have been called
     expect(mockService.completeSale).not.toHaveBeenCalled();
   });
 
@@ -449,6 +459,14 @@ describe("IPC complete handler", () => {
       warnings: ["Low stock warning"],
     };
     (mockService.completeSale as ReturnType<typeof vi.fn>).mockReturnValue(mockResult);
+    (mockSalesRepository.getDetailedSaleById as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "sale-1",
+      total: "200.00",
+      customer: "Mostrador",
+      invoiceStatus: "none",
+      invoiceRequested: false,
+      createdAt: "2026-07-01T00:00:00.000Z",
+    });
 
     const result = await invokeComplete({
       items: [{ productId: "p1", name: "X", quantity: 1, unitPrice: "10", subtotal: "10", discountAmount: "0" }],
@@ -460,9 +478,7 @@ describe("IPC complete handler", () => {
     expect(result.success).toBe(true);
     expect(result.sale).toBeDefined();
     expect(result.sale.id).toBe("sale-1");
-    // outboxId should NOT be at top level
     expect((result as Record<string, unknown>).outboxId).toBeUndefined();
-    // warnings should pass through
     expect(result.warnings).toEqual(["Low stock warning"]);
   });
 
@@ -479,6 +495,14 @@ describe("IPC complete handler", () => {
       outboxId: "outbox-1",
     };
     (mockService.completeSale as ReturnType<typeof vi.fn>).mockReturnValue(mockResult);
+    (mockSalesRepository.getDetailedSaleById as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "sale-1",
+      total: "200.00",
+      customer: "Mostrador",
+      invoiceStatus: "none",
+      invoiceRequested: false,
+      createdAt: "2026-07-01T00:00:00.000Z",
+    });
 
     const result = await invokeComplete({
       items: [{ productId: "p1", name: "X", quantity: 1, unitPrice: "10", subtotal: "10", discountAmount: "0" }],
@@ -488,7 +512,6 @@ describe("IPC complete handler", () => {
     });
 
     expect(result.success).toBe(true);
-    // Runtime invoiceRequested should be present on the sale object
     expect(result.sale).toHaveProperty("invoiceRequested", false);
   });
 
@@ -567,9 +590,11 @@ describe("IPC complete handler", () => {
 
 describe("IPC get handler", () => {
   let mockService: SaleService;
+  let mockSalesRepository: SalesSqliteRepository;
 
   beforeEach(() => {
     mockService = createMockSaleService();
+    mockSalesRepository = createMockSalesRepository();
   });
 
   afterEach(() => {
@@ -583,7 +608,7 @@ describe("IPC get handler", () => {
 
   async function invokeGet(saleId: string) {
     const { ipcMain } = await import("electron");
-    registerSalesIpc(mockService);
+    registerSalesIpc(mockService, mockSalesRepository);
 
     const handler = ((ipcMain as unknown as { _handlers: Map<string, (...args: any[]) => any> })._handlers).get(
       "offline:sales:get",
@@ -593,7 +618,7 @@ describe("IPC get handler", () => {
   }
 
   it("returns success with sale when found", async () => {
-    (mockService.getSale as ReturnType<typeof vi.fn>).mockReturnValue({
+    (mockSalesRepository.getDetailedSaleById as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "sale-1",
       total: "200.00",
       customer: "Mostrador",
@@ -608,7 +633,7 @@ describe("IPC get handler", () => {
   });
 
   it("returns NOT_FOUND when sale does not exist", async () => {
-    (mockService.getSale as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+    (mockSalesRepository.getDetailedSaleById as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
 
     const result = await invokeGet("nonexistent");
     expect(result.success).toBe(false);
@@ -617,7 +642,7 @@ describe("IPC get handler", () => {
   });
 
   it("returns SALE_ERROR on unexpected failure", async () => {
-    (mockService.getSale as ReturnType<typeof vi.fn>).mockImplementation(() => {
+    (mockSalesRepository.getDetailedSaleById as ReturnType<typeof vi.fn>).mockImplementation(() => {
       throw new Error("DB error");
     });
 
@@ -627,7 +652,7 @@ describe("IPC get handler", () => {
   });
 
   it("falls back to 'Failed to retrieve sale' for non-Error throws", async () => {
-    (mockService.getSale as ReturnType<typeof vi.fn>).mockImplementation(() => {
+    (mockSalesRepository.getDetailedSaleById as ReturnType<typeof vi.fn>).mockImplementation(() => {
       throw "weird";
     });
 
@@ -639,9 +664,11 @@ describe("IPC get handler", () => {
 
 describe("IPC list handler", () => {
   let mockService: SaleService;
+  let mockSalesRepository: SalesSqliteRepository;
 
   beforeEach(() => {
     mockService = createMockSaleService();
+    mockSalesRepository = createMockSalesRepository();
   });
 
   afterEach(() => {
@@ -655,7 +682,7 @@ describe("IPC list handler", () => {
 
   async function invokeList() {
     const { ipcMain } = await import("electron");
-    registerSalesIpc(mockService);
+    registerSalesIpc(mockService, mockSalesRepository);
 
     const handler = ((ipcMain as unknown as { _handlers: Map<string, (...args: any[]) => any> })._handlers).get(
       "offline:sales:list",
@@ -676,11 +703,22 @@ describe("IPC list handler", () => {
         syncStatus: "pending",
       },
     ]);
+    (mockSalesRepository.listDetailedSales as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        id: "sale-1",
+        total: "200.00",
+        customer: "Mostrador",
+        invoiceStatus: "none",
+        invoiceRequested: false,
+        createdAt: "2026-07-01T00:00:00.000Z",
+      },
+    ]);
 
     const result = await invokeList();
     expect(Array.isArray(result)).toBe(true);
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("sale-1");
+    expect(result[0].syncStatus).toBe("pending");
   });
 
   it("returns empty array on handler failure", async () => {

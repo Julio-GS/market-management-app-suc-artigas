@@ -40,11 +40,12 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Market Management
+  include: build/installer.nsh
 
 publish:
   provider: github
   owner: Julio-GS
-  repo: market-management-app-suc-basualdo
+  repo: market-management-app-suc-artigas
   releaseType: release
   channel: latest
   publishAutoUpdate: true

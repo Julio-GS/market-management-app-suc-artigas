@@ -9,6 +9,7 @@ dist/
 release/
 out/
 build/frontend/
+build/vc_redist.x64.exe
 
 # Environment
 .env

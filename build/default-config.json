@@ -1,11 +1,11 @@
 {
-  "apiBaseUrl": "https://supermarket-management-backend-production.up.railway.app/api/v1",
+  "apiBaseUrl": "https://market-management-suc-artigas-backend-production.up.railway.app/api/v1",
   "frontendDevUrl": "http://localhost:3000",
   "updates": {
     "enabled": true,
     "provider": "github",
     "owner": "Julio-GS",
-    "repo": "market-management-app-suc-basualdo",
+    "repo": "market-management-app-suc-artigas",
     "channel": "latest"
   },
   "offline": {
