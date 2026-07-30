@@ -1,5 +1,5 @@
 {
-  "apiBaseUrl": "https://market-management-suc-artigas-backend-production.up.railway.app/api/v1",
+  "apiBaseUrl": "https://suc-artigas-backend-production.up.railway.app/api/v1",
   "frontendDevUrl": "http://localhost:3000",
   "updates": {
     "enabled": true,
